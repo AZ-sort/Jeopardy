@@ -313,6 +313,81 @@ check("rejoining does not duplicate the player", h2.state.players.length === 2);
 check("the score survived the reconnect", dee().score === 300, String(dee().score));
 check("they are back online", dee().connected === true);
 
+console.log("");
+console.log("Saved boards are not public");
+{
+  const sample = {
+    name: "Smoke Secret Board",
+    board: {
+      categories: [
+        {
+          title: "Secrets",
+          clues: [100, 200, 300, 400, 500].map((value) => ({
+            value,
+            clue: "a clue",
+            answer: "THE SECRET ANSWER",
+            revealed: false,
+            wager: null,
+          })),
+        },
+      ],
+    },
+  };
+
+  const asHost = (extra = {}) => ({ "x-host-token": room.hostToken, ...extra });
+
+  const saved = await fetch(BASE + "/api/boards", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...asHost() },
+    body: JSON.stringify(sample),
+  });
+  check("a host can save a board", saved.status === 200, String(saved.status));
+
+  const anonSave = await fetch(BASE + "/api/boards", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(sample),
+  });
+  check("a stranger cannot overwrite a board", anonSave.status === 403, String(anonSave.status));
+
+  const anonList = await fetch(BASE + "/api/boards");
+  check("a stranger cannot list boards", anonList.status === 403, String(anonList.status));
+
+  const anonRead = await fetch(BASE + "/api/boards/Smoke%20Secret%20Board");
+  check("a stranger cannot read a board", anonRead.status === 403, String(anonRead.status));
+  const leaked = await anonRead.text();
+  check(
+    "no answer leaks in the refusal body",
+    !leaked.includes("THE SECRET ANSWER"),
+  );
+
+  const hostRead = await fetch(BASE + "/api/boards/Smoke%20Secret%20Board", { headers: asHost() });
+  check("a host can still read a board", hostRead.status === 200, String(hostRead.status));
+
+  const badToken = await fetch(BASE + "/api/boards", {
+    headers: { "x-host-token": "0".repeat(32) },
+  });
+  check("a wrong host token is refused", badToken.status === 403, String(badToken.status));
+}
+
+console.log("");
+console.log("WebSocket origin");
+{
+  const hijack = await new Promise((resolve) => {
+    const ws = new WebSocket("ws://localhost:" + PORT + "/ws", {
+      headers: { Origin: "http://evil.example" },
+    });
+    ws.on("message", (raw) => {
+      const m = JSON.parse(String(raw));
+      if (m.type === "fatal") resolve("refused");
+    });
+    ws.on("close", () => resolve("refused"));
+    ws.on("open", () => ws.send(JSON.stringify({ type: "hello", role: "player", code: room.code, name: "Evil" })));
+    setTimeout(() => resolve("allowed"), 1500);
+  });
+  check("a socket from another site is refused", hijack === "refused", hijack);
+}
+
 console.log("\nManual score correction");
 h2.send({ type: "adjustScore", playerId: "s-1", delta: 100 });
 await wait(100);

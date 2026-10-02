@@ -13,7 +13,7 @@
 import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -52,6 +52,55 @@ const ROOM_TTL_MS = 6 * 60 * 60 * 1000;
  * never need it; they only ever type a room code.
  */
 const HOST_PASSWORD = process.env.HOST_PASSWORD?.trim() || null;
+
+/** Stops a public URL being turned into unbounded memory growth. */
+const MAX_ROOMS = Number(process.env.MAX_ROOMS) || 200;
+
+/**
+ * Constant-time compare, so a secret cannot be recovered a character at a time.
+ * Length still leaks, which is acceptable for these values.
+ */
+function secretsMatch(a, b) {
+  const left = Buffer.from(String(a ?? ""), "utf8");
+  const right = Buffer.from(String(b ?? ""), "utf8");
+  if (left.length !== right.length || left.length === 0) return false;
+  return timingSafeEqual(left, right);
+}
+
+/**
+ * Authorizes the saved-board routes.
+ *
+ * A board holds every answer, so listing or reading one must not be open to
+ * anyone who knows the URL. Proof of being a host is the token handed out when
+ * a room was created, which the host page already holds.
+ */
+function isHost(req) {
+  const token = req.get("x-host-token");
+  if (!token) return false;
+  for (const room of rooms.values()) {
+    if (secretsMatch(token, room.hostToken)) return true;
+  }
+  return false;
+}
+
+/**
+ * A WebSocket is not covered by CORS, so without this any page on the internet
+ * could open a socket to this server. A missing Origin means a non-browser
+ * client, which is not a cross-site risk, so it is allowed.
+ */
+function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+
+  const allowed = process.env.ALLOWED_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean);
+  if (allowed?.length) return allowed.includes(origin);
+
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -141,8 +190,11 @@ app.get("/api/health", (req, res) => {
 });
 
 app.post("/api/rooms", (req, res) => {
-  if (HOST_PASSWORD && req.body?.password !== HOST_PASSWORD) {
+  if (HOST_PASSWORD && !secretsMatch(req.body?.password, HOST_PASSWORD)) {
     return res.status(403).json({ error: "Wrong host password." });
+  }
+  if (rooms.size >= MAX_ROOMS) {
+    return res.status(503).json({ error: "Too many games running. Try again later." });
   }
   const room = createRoom();
   res.json({
@@ -162,7 +214,7 @@ app.get("/api/rooms/:code", (req, res) => {
 app.post("/api/rooms/:code/generate", async (req, res) => {
   const room = rooms.get(String(req.params.code).toUpperCase());
   if (!room) return res.status(404).json({ error: "No game with that code." });
-  if (req.body?.hostToken !== room.hostToken) {
+  if (!secretsMatch(req.body?.hostToken, room.hostToken)) {
     return res.status(403).json({ error: "Not the host of this game." });
   }
 
@@ -203,6 +255,7 @@ function safeBoardName(name) {
 }
 
 app.get("/api/boards", async (req, res) => {
+  if (!isHost(req)) return res.status(403).json({ error: "Only a host can do that." });
   try {
     const files = await fs.readdir(BOARDS_DIR);
     const names = files.filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
@@ -213,6 +266,7 @@ app.get("/api/boards", async (req, res) => {
 });
 
 app.get("/api/boards/:name", async (req, res) => {
+  if (!isHost(req)) return res.status(403).json({ error: "Only a host can do that." });
   const name = safeBoardName(req.params.name);
   if (!name) return res.status(400).json({ error: "Bad board name." });
   try {
@@ -224,6 +278,7 @@ app.get("/api/boards/:name", async (req, res) => {
 });
 
 app.post("/api/boards", async (req, res) => {
+  if (!isHost(req)) return res.status(403).json({ error: "Only a host can do that." });
   const name = safeBoardName(req.body?.name);
   if (!name) return res.status(400).json({ error: "Give the board a name." });
 
@@ -253,7 +308,11 @@ app.get("/play", (req, res) => res.sendFile(path.join(__dirname, "public", "play
 
 // ------------------------------------------------------------------ WebSocket
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  if (!originAllowed(req)) {
+    send(ws, { type: "fatal", message: "Blocked: unrecognised origin." });
+    return ws.close();
+  }
   ws.meta = null;
 
   ws.on("message", (raw) => {
@@ -302,7 +361,7 @@ function handleHello(ws, msg) {
   room.lastSeen = Date.now();
 
   if (msg.role === "host") {
-    if (msg.hostToken !== room.hostToken) {
+    if (!secretsMatch(msg.hostToken, room.hostToken)) {
       return send(ws, { type: "fatal", message: "Not the host of this game." });
     }
     ws.meta = { role: "host", code };

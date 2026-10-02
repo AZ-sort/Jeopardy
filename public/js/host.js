@@ -219,7 +219,7 @@ el("save").addEventListener("click", async () => {
   const name = el("board-name").value.trim();
   if (!name) return toast("Give the board a name first.");
   try {
-    await postJson("/api/boards", { name, board: draft });
+    await postJson("/api/boards", { name, board: draft }, { "x-host-token": hostToken });
     toast("Saved as “" + name + "”.", "good");
     loadSavedBoardList();
   } catch (err) {
@@ -230,7 +230,7 @@ el("save").addEventListener("click", async () => {
 async function loadSavedBoardList() {
   const select = el("saved");
   try {
-    const res = await fetch("/api/boards");
+    const res = await fetch("/api/boards", { headers: { "x-host-token": hostToken } });
     const { boards } = await res.json();
     select.textContent = "";
     const first = document.createElement("option");
@@ -252,7 +252,9 @@ el("saved").addEventListener("change", async (e) => {
   const name = e.target.value;
   if (!name) return;
   try {
-    const res = await fetch("/api/boards/" + encodeURIComponent(name));
+    const res = await fetch("/api/boards/" + encodeURIComponent(name), {
+      headers: { "x-host-token": hostToken },
+    });
     if (!res.ok) throw new Error("Could not load that board.");
     const { board } = await res.json();
 

@@ -131,10 +131,10 @@ export function connect({ hello, onMessage }) {
 }
 
 /** Small helper: POST JSON and throw the server's own error message. */
-export async function postJson(url, body) {
+export async function postJson(url, body, headers = {}) {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body ?? {}),
   });
   let data = {};
