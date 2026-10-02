@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Buzz Night</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23161b3d'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23ff4d5a'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@400;700;800&family=Archivo:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body>
+    <main class="landing">
+      <header>
+        <h1 class="landing__title">Buzz<br />Night</h1>
+        <p class="landing__sub">
+          A quiz board on the TV, a buzzer in everyone&rsquo;s pocket. You read the
+          clues out loud and decide who got it.
+        </p>
+      </header>
+
+      <div class="doors">
+        <button class="tile door" id="host">
+          <span class="door__value">Host</span>
+          <span class="door__hint">
+            Build a board, then run the game from this screen
+          </span>
+          <span class="door__gate" id="gate" hidden>
+            <input
+              type="password"
+              id="host-password"
+              placeholder="Host password"
+              aria-label="Host password"
+              autocomplete="current-password"
+            />
+          </span>
+        </button>
+
+        <a class="tile door" href="/play">
+          <span class="door__value">Join</span>
+          <span class="door__hint">All you need is the four-letter code</span>
+        </a>
+      </div>
+
+      <footer class="landing__foot">
+        <p>
+          Six categories, five clues each, rising from $100 to $500. Type a theme
+          and Claude writes the category, or write the clues yourself.
+        </p>
+        <p>
+          Everyone plays from their own phone &mdash; no app, no accounts. Scores
+          and rulings are yours to make.
+        </p>
+      </footer>
+    </main>
+
+    <script type="module" src="/js/index.js"></script>
+  </body>
+</html>

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <meta name="theme-color" content="#161b3d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Buzz Night</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23161b3d'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23ff4d5a'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@400;700;800&family=Archivo:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body>
+    <main class="join" id="join" hidden>
+      <h1 class="join__title">Buzz<br />Night</h1>
+
+      <label class="field">
+        <span>Game code</span>
+        <input
+          type="text"
+          id="j-code"
+          class="join__code"
+          maxlength="4"
+          autocapitalize="characters"
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="ABCD"
+        />
+      </label>
+
+      <label class="field">
+        <span>Your name</span>
+        <input type="text" id="j-name" maxlength="20" autocomplete="off" />
+      </label>
+
+      <button class="btn btn--go" id="j-go">Join the game</button>
+    </main>
+
+    <div class="play" id="play" hidden>
+      <div class="play__rail">
+        <span id="p-name"></span>
+        <span class="play__score" id="p-score">$0</span>
+      </div>
+
+      <div class="play__main">
+        <p class="play__meta" id="p-meta"></p>
+        <button class="buzzer" id="buzz" disabled>Wait</button>
+        <p class="play__clue" id="p-clue"></p>
+      </div>
+    </div>
+
+    <script type="module" src="/js/play.js"></script>
+  </body>
+</html>

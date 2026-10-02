@@ -1,0 +1,21 @@
+{
+  "name": "jeopardy",
+  "version": "1.0.0",
+  "description": "Jeopardy-style party game: host screen on a laptop or TV, friends buzz in from their phones, AI-generated or hand-written categories.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "smoke": "node --env-file-if-exists=.env scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "express": "^4.21.2",
+    "ws": "^8.18.0",
+    "zod": "^4.6.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
