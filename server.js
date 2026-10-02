@@ -17,7 +17,10 @@ import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import fs from "node:fs/promises";
+import cookieParser from "cookie-parser";
+
+import * as db from "./lib/db.js";
+import * as auth from "./lib/auth.js";
 
 import * as G from "./lib/game.js";
 import {
@@ -35,11 +38,6 @@ import {
 } from "./lib/generate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-/**
- * Saved boards. Point BOARDS_DIR at a mounted volume when hosting - a
- * container filesystem is wiped on every restart and redeploy.
- */
-const BOARDS_DIR = process.env.BOARDS_DIR?.trim() || path.join(__dirname, "boards");
 const PORT = Number(process.env.PORT) || 3000;
 
 /** Unambiguous on a phone keypad: no O/0, I/1, S/5, B/8. */
@@ -57,6 +55,42 @@ const HOST_PASSWORD = process.env.HOST_PASSWORD?.trim() || null;
 const MAX_ROOMS = Number(process.env.MAX_ROOMS) || 200;
 
 /**
+ * Generation limits.
+ *
+ * Hosting is open to anyone, so the API credit is the one thing that needs a
+ * ceiling. A real board is six categories, so the hourly allowance is three
+ * boards an hour - far past normal use, well short of a bill.
+ */
+const GEN_PER_IP_PER_HOUR = Number(process.env.GEN_PER_IP_PER_HOUR) || 20;
+const GEN_PER_DAY = Number(process.env.GEN_PER_DAY) || 500;
+
+/** ip -> timestamps of recent generations. */
+const genByIp = new Map();
+let genToday = { day: new Date().toDateString(), count: 0 };
+
+/** @returns {null} when allowed, or a message explaining the refusal. */
+function generationBlocked(ip) {
+  const now = Date.now();
+
+  const today = new Date().toDateString();
+  if (genToday.day !== today) genToday = { day: today, count: 0 };
+  if (genToday.count >= GEN_PER_DAY) {
+    return "This game has used up today's AI budget. Write this category yourself, or try again tomorrow.";
+  }
+
+  const hourAgo = now - 60 * 60 * 1000;
+  const recent = (genByIp.get(ip) ?? []).filter((t) => t > hourAgo);
+  if (recent.length >= GEN_PER_IP_PER_HOUR) {
+    return `That is ${GEN_PER_IP_PER_HOUR} categories in an hour, which is as many as this allows. Write this one yourself, or come back later.`;
+  }
+
+  recent.push(now);
+  genByIp.set(ip, recent);
+  genToday.count += 1;
+  return null;
+}
+
+/**
  * Constant-time compare, so a secret cannot be recovered a character at a time.
  * Length still leaks, which is acceptable for these values.
  */
@@ -65,22 +99,6 @@ function secretsMatch(a, b) {
   const right = Buffer.from(String(b ?? ""), "utf8");
   if (left.length !== right.length || left.length === 0) return false;
   return timingSafeEqual(left, right);
-}
-
-/**
- * Authorizes the saved-board routes.
- *
- * A board holds every answer, so listing or reading one must not be open to
- * anyone who knows the URL. Proof of being a host is the token handed out when
- * a room was created, which the host page already holds.
- */
-function isHost(req) {
-  const token = req.get("x-host-token");
-  if (!token) return false;
-  for (const room of rooms.values()) {
-    if (secretsMatch(token, room.hostToken)) return true;
-  }
-  return false;
 }
 
 /**
@@ -103,7 +121,11 @@ function originAllowed(req) {
 }
 
 const app = express();
+// Railway terminates TLS in front of us, so the client IP is in
+// X-Forwarded-For. Without this every visitor shares one rate-limit bucket.
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 const server = createServer(app);
@@ -185,6 +207,7 @@ app.get("/api/health", (req, res) => {
     ai: hasCredentials(),
     aiProvider: providerLabel(),
     hostPasswordRequired: Boolean(HOST_PASSWORD),
+    accounts: auth.isConfigured() && db.isReady(),
     rooms: rooms.size,
   });
 });
@@ -226,6 +249,9 @@ app.post("/api/rooms/:code/generate", async (req, res) => {
     return res.status(409).json({ error: "That category is already generating." });
   }
 
+  const blocked = generationBlocked(req.ip);
+  if (blocked) return res.status(429).json({ error: blocked });
+
   room.generating.add(index);
   try {
     const avoid = collectAnswers(room.draft);
@@ -244,42 +270,117 @@ app.post("/api/rooms/:code/generate", async (req, res) => {
   }
 });
 
-// ---- saved boards
+// ---- sign in
 
-function safeBoardName(name) {
-  const cleaned = String(name ?? "")
-    .trim()
-    .replace(/[^a-zA-Z0-9 _-]/g, "")
-    .slice(0, 60);
-  return cleaned || null;
+app.get("/auth/google", (req, res) => {
+  if (!auth.isConfigured()) {
+    return res.status(503).send("Sign-in is not set up on this server.");
+  }
+  auth.beginLogin(req, res);
+});
+
+app.get("/auth/google/callback", async (req, res) => {
+  try {
+    const profile = await auth.completeLogin(req, res);
+    const user = await db.upsertUser(profile);
+    auth.setSession(req, res, user.id);
+    res.redirect("/");
+  } catch (err) {
+    console.error("sign-in failed:", err.message);
+    res.redirect("/?signin=failed");
+  }
+});
+
+app.post("/auth/logout", (req, res) => {
+  auth.clearSession(req, res);
+  res.json({ ok: true });
+});
+
+app.get("/api/me", async (req, res) => {
+  const available = auth.isConfigured() && db.isReady();
+  const id = auth.currentUserId(req);
+  if (!available || !id) return res.json({ available, signedIn: false });
+
+  try {
+    const user = await db.getUser(id);
+    if (!user) {
+      // The account was deleted while this cookie was still around.
+      auth.clearSession(req, res);
+      return res.json({ available, signedIn: false });
+    }
+    res.json({ available, signedIn: true, email: user.email, name: user.name });
+  } catch {
+    res.json({ available, signedIn: false });
+  }
+});
+
+app.delete("/api/account", async (req, res) => {
+  const id = auth.currentUserId(req);
+  if (!id) return res.status(401).json({ error: "You are not signed in." });
+  try {
+    await db.deleteUser(id);
+    auth.clearSession(req, res);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("account deletion failed:", err.message);
+    res.status(500).json({ error: "Could not delete the account." });
+  }
+});
+
+// ---- saved boards, owned by the signed-in user
+
+/**
+ * Boards belong to an account, so one host can never read another's answers.
+ * Signed out, the board routes simply say so - everything else still works.
+ */
+function requireUser(req, res) {
+  if (!db.isReady()) {
+    res.status(503).json({ error: "Saving boards is not available on this server." });
+    return null;
+  }
+  const id = auth.currentUserId(req);
+  if (!id) {
+    res.status(401).json({ error: "Sign in to save and load boards." });
+    return null;
+  }
+  return id;
+}
+
+function cleanBoardName(name) {
+  return String(name ?? "").trim().slice(0, 60) || null;
 }
 
 app.get("/api/boards", async (req, res) => {
-  if (!isHost(req)) return res.status(403).json({ error: "Only a host can do that." });
+  const userId = requireUser(req, res);
+  if (!userId) return;
   try {
-    const files = await fs.readdir(BOARDS_DIR);
-    const names = files.filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
-    res.json({ boards: names.sort() });
-  } catch {
-    res.json({ boards: [] });
+    res.json({ boards: await db.listBoards(userId) });
+  } catch (err) {
+    console.error("board list failed:", err.message);
+    res.status(500).json({ error: "Could not read your boards." });
   }
 });
 
 app.get("/api/boards/:name", async (req, res) => {
-  if (!isHost(req)) return res.status(403).json({ error: "Only a host can do that." });
-  const name = safeBoardName(req.params.name);
+  const userId = requireUser(req, res);
+  if (!userId) return;
+  const name = cleanBoardName(req.params.name);
   if (!name) return res.status(400).json({ error: "Bad board name." });
+
   try {
-    const raw = await fs.readFile(path.join(BOARDS_DIR, name + ".json"), "utf8");
-    res.json({ board: JSON.parse(raw) });
-  } catch {
-    res.status(404).json({ error: "No saved board by that name." });
+    const board = await db.getBoard(userId, name);
+    if (!board) return res.status(404).json({ error: "No saved board by that name." });
+    res.json({ board });
+  } catch (err) {
+    console.error("board read failed:", err.message);
+    res.status(500).json({ error: "Could not read that board." });
   }
 });
 
 app.post("/api/boards", async (req, res) => {
-  if (!isHost(req)) return res.status(403).json({ error: "Only a host can do that." });
-  const name = safeBoardName(req.body?.name);
+  const userId = requireUser(req, res);
+  if (!userId) return;
+  const name = cleanBoardName(req.body?.name);
   if (!name) return res.status(400).json({ error: "Give the board a name." });
 
   // Save the compacted board so empty slots are not written out, but keep
@@ -288,16 +389,27 @@ app.post("/api/boards", async (req, res) => {
   if (!board.categories.length) return res.status(400).json({ error: "Nothing to save yet." });
 
   try {
-    await fs.mkdir(BOARDS_DIR, { recursive: true });
-    await fs.writeFile(
-      path.join(BOARDS_DIR, name + ".json"),
-      JSON.stringify(board, null, 2),
-      "utf8",
-    );
+    await db.saveBoard(userId, name, board);
     res.json({ ok: true, name });
   } catch (err) {
-    console.error("board save failed:", err);
+    console.error("board save failed:", err.message);
     res.status(500).json({ error: "Could not save the board." });
+  }
+});
+
+app.delete("/api/boards/:name", async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+  const name = cleanBoardName(req.params.name);
+  if (!name) return res.status(400).json({ error: "Bad board name." });
+
+  try {
+    const removed = await db.deleteBoard(userId, name);
+    if (!removed) return res.status(404).json({ error: "No saved board by that name." });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("board delete failed:", err.message);
+    res.status(500).json({ error: "Could not delete that board." });
   }
 });
 
@@ -498,7 +610,18 @@ setInterval(() => {
     const idle = room.hosts.size === 0 && room.players.size === 0;
     if (idle && now - room.lastSeen > ROOM_TTL_MS) rooms.delete(code);
   }
+
+  const hourAgo = now - 60 * 60 * 1000;
+  for (const [ip, times] of genByIp) {
+    const recent = times.filter((t) => t > hourAgo);
+    if (recent.length) genByIp.set(ip, recent);
+    else genByIp.delete(ip);
+  }
 }, 10 * 60 * 1000).unref();
+
+// Saved boards need a database, but nothing else does. A failure here is
+// reported and the server still starts, without the ability to save.
+await db.init();
 
 server.listen(PORT, () => {
   console.log("\n  Jeopardy server running.\n");
@@ -524,7 +647,19 @@ server.listen(PORT, () => {
     "  AI categories: " +
       (hasCredentials()
         ? "via " + providerLabel()
-        : "off (set ANTHROPIC_API_KEY or OPENROUTER_API_KEY)") +
-      "\n",
+        : "off (set ANTHROPIC_API_KEY or OPENROUTER_API_KEY)"),
   );
+
+  // Saving boards needs both halves; say which one is missing rather than
+  // leaving a dead sign-in button on the page.
+  if (auth.isConfigured() && db.isReady()) {
+    console.log("  Saved boards:  on, via Google sign-in");
+  } else if (!auth.isConfigured() && !db.isConfigured()) {
+    console.log("  Saved boards:  off (set GOOGLE_CLIENT_ID/SECRET and DATABASE_URL)");
+  } else if (!auth.isConfigured()) {
+    console.log("  Saved boards:  off (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)");
+  } else {
+    console.log("  Saved boards:  off (database unavailable)");
+  }
+  console.log("");
 });

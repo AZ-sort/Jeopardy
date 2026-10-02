@@ -127,22 +127,53 @@ environment variables.
    | Variable | Value |
    |---|---|
    | `OPENROUTER_API_KEY` | your key |
-   | `HOST_PASSWORD` | anything you like — see below |
-   | `BOARDS_DIR` | `/data/boards` (only if you add a volume) |
+   | `HOST_PASSWORD` | optional — see below |
+   | `DATABASE_URL` | set by Railway when you add Postgres |
+   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | for sign-in |
+   | `SESSION_SECRET` | any long random string |
 
 4. Under **Settings → Networking**, click **Generate Domain**. That URL is the
    game.
 
 Railway sets `PORT` and `RAILWAY_PUBLIC_DOMAIN` itself; the server reads both.
 
-**Set `HOST_PASSWORD`.** Without it, anyone who finds the URL can open a game
-and spend your API credit. With it, starting a game asks for the password once —
-players still need nothing but the four-letter room code.
+**`HOST_PASSWORD` is optional.** Leave it unset and anyone can host a game,
+which is the point if you want the link to be shareable. Set it and starting a
+game asks for the password once — useful for a private instance. Either way the
+AI spend is capped (see below), so an open instance is not an open wallet.
 
-**Add a volume if you want saved boards to survive.** A container filesystem is
-wiped on every restart and redeploy. In Railway, add a volume mounted at `/data`
-and set `BOARDS_DIR=/data/boards`. Without one, boards you save are gone the
-next time the service restarts.
+### Saved boards and accounts
+
+Boards are saved to an account, so they follow you to any device — and so one
+host can never read another's answers. Signing in is optional and unlocks only
+saving: hosting, playing and generating categories all work signed out.
+
+1. **Add Postgres** in Railway (New → Database → PostgreSQL). It sets
+   `DATABASE_URL` for you. Use the internal connection string; the schema is
+   created automatically on first boot.
+2. **Create a Google OAuth client** at
+   [console.cloud.google.com](https://console.cloud.google.com) → APIs &
+   Services → Credentials → Create credentials → OAuth client ID → *Web
+   application*. Add this to **Authorised redirect URIs**:
+
+   ```
+   https://<your-railway-domain>/auth/google/callback
+   ```
+
+   Then set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Railway.
+3. **Set `SESSION_SECRET`** to any long random string, or everyone is signed out
+   whenever the service restarts.
+
+While the Google consent screen is in *Testing* mode only the accounts you list
+can sign in; publishing it is a form rather than a review for plain
+email/profile access.
+
+### Keeping the AI bill bounded
+
+Because anyone can host, generation is rate limited rather than gated:
+`GEN_PER_IP_PER_HOUR` (default 20 — a board is six) and `GEN_PER_DAY` (default
+500, roughly a dollar). Set a hard spend limit on the provider key as well; that
+is the backstop that holds even if this has a bug.
 
 ### Just for tonight
 
@@ -163,12 +194,16 @@ server.js            HTTP + WebSocket, room registry, message routing
 lib/game.js          the rules as pure functions - phases, buzzing, scoring
 lib/board.js         board shape and validation, shared by all three input paths
 lib/generate.js      picks a provider, validates and retries the result
+lib/db.js            users and saved boards, in Postgres
+lib/auth.js          Google sign-in and the session cookie
 lib/ai/shared.js     the prompt, the schema, and the category conversion
 lib/ai/anthropic.js  Anthropic adapter
 lib/ai/openrouter.js OpenRouter adapter (plain fetch, no extra SDK)
 public/              the three screens, as plain HTML/CSS/JS
 test/game.test.js    unit tests for the rules
 test/generate.test.js  generation, against a mock OpenRouter
+test/db.test.js      the real schema and queries, on an in-memory Postgres
+test/auth.test.js    session cookie signing and tampering
 scripts/smoke.mjs    end-to-end test against a running server
 railway.json         deploy config for Railway
 ```
@@ -199,8 +234,9 @@ OpenRouter, covering the request shape and every failure branch without a key.
 ## Known limits
 
 - **Rooms are in memory.** Restarting the server — or a redeploy — ends any game
-  in progress. Saved boards persist as JSON under `boards/`, or under
-  `BOARDS_DIR` when that is set.
+  in progress. Saved boards live in Postgres and are unaffected.
+- **Sign-in needs both halves.** Without a database *and* Google credentials,
+  saving is switched off and the page says so; everything else still works.
 - **Buzz fairness is arrival order.** Someone on worse wifi is at a real
   disadvantage of a few tens of milliseconds. Fine among friends in one room;
   worth knowing if people are remote.

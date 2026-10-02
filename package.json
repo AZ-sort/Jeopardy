@@ -11,11 +11,16 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
+    "pg": "^8.23.1",
     "ws": "^8.18.0",
     "zod": "^4.6.5"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "pg-mem": "^3.0.14"
   }
 }

@@ -965,3 +965,31 @@ textarea {
 .door__gate input {
   text-align: center;
 }
+
+/* Sign-in state, under the board actions. Saving boards is the only thing an
+   account unlocks, so this stays quiet and out of the way. */
+.setup__account {
+  margin: 0.9rem 0 0;
+  color: var(--cream-dim);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.setup__account a,
+.setup__account button {
+  color: var(--brass);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.setup__account a:hover,
+.setup__account button:hover {
+  color: var(--cream);
+}
+
+.setup__account .danger {
+  color: var(--coral);
+}
