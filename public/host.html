@@ -46,15 +46,20 @@
           id="board-name"
           placeholder="Name this board"
           aria-label="Board name"
-          style="max-width: 220px"
+          style="max-width: 200px"
         />
         <button class="btn" id="save">Save board</button>
         <select id="saved" aria-label="Saved boards">
           <option value="">Load a saved board&hellip;</option>
         </select>
+        <button class="btn btn--quiet" id="delete">Delete</button>
         <span class="controls__spacer"></span>
         <button class="btn btn--go" id="start">Start the game</button>
       </div>
+
+      <!-- Signing in only unlocks saving boards. Hosting and playing never
+           need an account. -->
+      <p class="setup__account" id="account" hidden></p>
 
       <p class="setup__lobby" id="lobby">Nobody has joined yet.</p>
     </main>

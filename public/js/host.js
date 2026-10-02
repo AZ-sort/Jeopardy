@@ -98,7 +98,9 @@ function buildSetup() {
     slots.append(buildSlot(c));
   }
   setupBuilt = true;
-  loadSavedBoardList();
+  // Account state decides whether the board list can be populated at all, so
+  // it is fetched first rather than loading a list we may not be allowed.
+  refreshAccount();
 }
 
 /** Resizes a textarea to fit its content. */
@@ -215,11 +217,90 @@ function buildSlot(c) {
 
 el("start").addEventListener("click", () => socket.send({ type: "startGame" }));
 
+/**
+ * Saved boards belong to an account, so they follow you to any device.
+ *
+ * Signing in unlocks saving and nothing else — hosting, playing and generating
+ * categories all work signed out, so nobody has to hand over an identity to
+ * play a party game.
+ */
+let account = { available: false, signedIn: false };
+
+async function refreshAccount() {
+  try {
+    account = await (await fetch("/api/me")).json();
+  } catch {
+    account = { available: false, signedIn: false };
+  }
+  renderAccount();
+  if (account.signedIn) loadSavedBoardList();
+  else clearSavedBoardList();
+}
+
+function renderAccount() {
+  const line = el("account");
+  line.textContent = "";
+  line.hidden = false;
+
+  if (!account.available) {
+    line.textContent = "Saving boards is switched off on this server.";
+    return;
+  }
+
+  if (!account.signedIn) {
+    line.append(document.createTextNode("Boards you save follow you to any device. "));
+    const link = document.createElement("a");
+    link.href = "/auth/google";
+    link.textContent = "Sign in with Google";
+    line.append(link, document.createTextNode(" to save this one."));
+    return;
+  }
+
+  line.append(document.createTextNode("Signed in as " + (account.email ?? account.name ?? "you") + ". "));
+
+  const out = document.createElement("button");
+  out.textContent = "Sign out";
+  out.addEventListener("click", async () => {
+    await postJson("/auth/logout");
+    refreshAccount();
+    toast("Signed out.", "good");
+  });
+
+  const remove = document.createElement("button");
+  remove.className = "danger";
+  remove.textContent = "Delete account";
+  remove.addEventListener("click", async () => {
+    if (!confirm("Delete your account and every board you have saved? This cannot be undone.")) {
+      return;
+    }
+    const res = await fetch("/api/account", { method: "DELETE" });
+    if (!res.ok) return toast("Could not delete the account.");
+    refreshAccount();
+    toast("Account and boards deleted.", "good");
+  });
+
+  line.append(out, document.createTextNode(" · "), remove);
+}
+
+/** Board actions are visible but explain themselves rather than silently failing. */
+function needsSignIn() {
+  if (!account.available) {
+    toast("Saving boards is switched off on this server.");
+    return true;
+  }
+  if (!account.signedIn) {
+    toast("Sign in with Google first — the link is just below.");
+    return true;
+  }
+  return false;
+}
+
 el("save").addEventListener("click", async () => {
+  if (needsSignIn()) return;
   const name = el("board-name").value.trim();
   if (!name) return toast("Give the board a name first.");
   try {
-    await postJson("/api/boards", { name, board: draft }, { "x-host-token": hostToken });
+    await postJson("/api/boards", { name, board: draft });
     toast("Saved as “" + name + "”.", "good");
     loadSavedBoardList();
   } catch (err) {
@@ -227,11 +308,37 @@ el("save").addEventListener("click", async () => {
   }
 });
 
+el("delete").addEventListener("click", async () => {
+  if (needsSignIn()) return;
+  const name = el("board-name").value.trim();
+  if (!name) return toast("Load or name a saved board first, then delete it.");
+  if (!confirm("Delete the saved board “" + name + "”?")) return;
+
+  const res = await fetch("/api/boards/" + encodeURIComponent(name), { method: "DELETE" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return toast(body.error ?? "Could not delete that board.");
+  toast("Deleted “" + name + "”.", "good");
+  loadSavedBoardList();
+});
+
+function clearSavedBoardList() {
+  const select = el("saved");
+  select.textContent = "";
+  const only = document.createElement("option");
+  only.value = "";
+  only.textContent = account.available ? "Sign in to load a board" : "Saving is off";
+  select.append(only);
+}
+
 async function loadSavedBoardList() {
+  if (!account.signedIn) return clearSavedBoardList();
+
   const select = el("saved");
   try {
-    const res = await fetch("/api/boards", { headers: { "x-host-token": hostToken } });
+    const res = await fetch("/api/boards");
+    if (!res.ok) return clearSavedBoardList();
     const { boards } = await res.json();
+
     select.textContent = "";
     const first = document.createElement("option");
     first.value = "";
@@ -250,24 +357,21 @@ async function loadSavedBoardList() {
 
 el("saved").addEventListener("change", async (e) => {
   const name = e.target.value;
+  e.target.value = "";
   if (!name) return;
-  try {
-    const res = await fetch("/api/boards/" + encodeURIComponent(name), {
-      headers: { "x-host-token": hostToken },
-    });
-    if (!res.ok) throw new Error("Could not load that board.");
-    const { board } = await res.json();
 
-    // Pad back out to six slots so every category stays editable.
-    draft = { categories: board.categories.slice(0, NUM_CATEGORIES) };
+  try {
+    const res = await fetch("/api/boards/" + encodeURIComponent(name));
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? "Could not load that board.");
+
+    draft = { categories: body.board.categories.slice(0, NUM_CATEGORIES) };
     buildSetup();
     el("board-name").value = name;
     socket.send({ type: "saveDraft", draft });
     toast("Loaded “" + name + "”.", "good");
   } catch (err) {
     toast(err.message);
-  } finally {
-    e.target.value = "";
   }
 });
 
