@@ -2,3 +2,7 @@ node_modules/
 boards/
 .env
 *.log
+
+# Claude Code scratch space, including worktrees it creates inside the repo.
+# These hold their own node_modules and must never be committed.
+.claude/
