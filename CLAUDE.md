@@ -85,10 +85,36 @@ Same as the other projects in this vault:
   Static and local checks have missed real breakage on sibling projects;
   production is play-tested by hand after a change ships.
 
+## A board is rounds, not categories
+
+`{ rounds: [...], final, options: { doubleRound, finalRound } }`. `rounds[0]`
+runs 100–500; `rounds[1]` exists only when `doubleRound` is on and runs
+200–1000. `game.board` still means "the board being played right now", so every
+rule that reads it was left alone; `game.rounds` and `game.roundIndex` are what
+move between them.
+
+Three things to know:
+
+- **There is no conversion of old `{categories}` boards**, deliberately. There
+  were none saved and the host UI has no import path. `validateBoard` refuses a
+  board with no `rounds` array rather than mangling it.
+- **`validateBoard` only inspects rounds that will be played** (`playedRounds`).
+  An untouched round 2 behind an off toggle must never block *Start the game* —
+  there is a test for exactly that.
+- **A round holds 1 to `MAX_CATEGORIES` columns.** The host adds and removes
+  them; blank ones are still dropped underneath as a safety net.
+
+`public/js/host.js` keeps its own copies of `ROUND_VALUES` and
+`MAX_CATEGORIES`, because the browser cannot import `lib/board.js` — it pulls
+in zod and there is no build step. Change one, change both; the smoke test
+asserts round 2's values over the wire.
+
 ## The Daily Double
 
-One per board, placed at random by `startGame` — which takes an injectable
-`random` so tests can pin it to a known square. Opening it enters `PHASE.WAGER`:
+`DAILY_DOUBLES_PER_ROUND` — one in round 1, two in round 2 — placed at random
+by `startGame` and `startNextRound`, which take an injectable `random` so tests
+can pin them to known squares. Placement prefers one per category and falls
+back to any free square when a round is too short. Opening it enters `PHASE.WAGER`:
 the host names who found it, that player bets from their phone in hundreds, and
 locking the bet sets `buzzedPlayer` so the ordinary `judge()` path scores it via
 `clue.wager ?? clue.value`. The only special case is that a wrong answer closes
@@ -106,6 +132,8 @@ The wager ceiling comes from the board's own highest value, not a hardcoded
 
 ## Not built yet
 
-Final Jeopardy, a Double Jeopardy round, timers, sound. A planned option at
-host-setup time chooses one board or two — the classic pair being 100–500
-followed by 200–1000.
+Final Jeopardy, sound, and any timer outside Final Jeopardy's answer window.
+The `final` field and the `finalRound` toggle already exist in the board shape
+and the setup screen shows the checkbox disabled, so PR 2 adds behaviour rather
+than changing the shape again. The design for it is in
+`docs/specs/2026-10-03-rounds-and-final-jeopardy-design.md`.

@@ -51,10 +51,10 @@ function client(onReady) {
   });
 }
 
-function makeBoard() {
-  const cat = (title) => ({
+function makeBoard(options = {}) {
+  const cat = (title, values) => ({
     title,
-    clues: [100, 200, 300, 400, 500].map((value) => ({
+    clues: values.map((value) => ({
       value,
       clue: title + " clue worth " + value,
       answer: title + " answer " + value,
@@ -63,7 +63,17 @@ function makeBoard() {
       dailyDouble: false,
     })),
   });
-  return { categories: [cat("Alpha"), cat("Beta")] };
+  const round = (prefix, values) => ({
+    categories: [cat(prefix + " Alpha", values), cat(prefix + " Beta", values)],
+  });
+  return {
+    rounds: [
+      round("R1", [100, 200, 300, 400, 500]),
+      round("R2", [200, 400, 600, 800, 1000]),
+    ],
+    final: null,
+    options: { doubleRound: false, finalRound: false, ...options },
+  };
 }
 
 // ---------------------------------------------------------------- setup
@@ -188,8 +198,8 @@ const ordinary = await openOrdinaryClue([
   [0, 1],
 ]);
 check("found an ordinary clue to inspect", ordinary !== null);
-const expectedClue = "Alpha clue worth " + (ordinary.q + 1) * 100;
-const expectedAnswer = "Alpha answer " + (ordinary.q + 1) * 100;
+const expectedClue = "R1 Alpha clue worth " + (ordinary.q + 1) * 100;
+const expectedAnswer = "R1 Alpha answer " + (ordinary.q + 1) * 100;
 check(
   "player payload omits the answer while unrevealed",
   ann.state.activeClue?.answer === null,
@@ -490,6 +500,106 @@ console.log("\nManual score correction");
 h2.send({ type: "adjustScore", playerId: "s-1", delta: 100 });
 await wait(100);
 check("the host can nudge a score", cal().score === -200, String(cal().score));
+
+// ---------------------------------------------------------------- two rounds
+
+/**
+ * Clears whatever board is open, closing ordinary clues and playing out any
+ * Daily Double it uncovers. Walks by the `revealed` flags because the Daily
+ * Double squares are random and a fixed order would eventually trip over one.
+ */
+async function playEveryClue(host, player, playerId) {
+  const next = (board) => {
+    for (let c = 0; c < board.categories.length; c++) {
+      const clues = board.categories[c].clues;
+      for (let q = 0; q < clues.length; q++) if (!clues[q].revealed) return { c, q };
+    }
+    return null;
+  };
+
+  let cell = next(host.state.board);
+  while (cell) {
+    host.send({ type: "openClue", c: cell.c, q: cell.q });
+    await wait(80);
+
+    if (host.state.phase === "wager") {
+      host.send({ type: "assignDailyDouble", playerId });
+      await wait(80);
+      player.send({ type: "setWager", amount: 100 });
+      await wait(100);
+      host.send({ type: "judge", correct: false });
+      await wait(100);
+    } else {
+      host.send({ type: "closeClue" });
+      await wait(70);
+    }
+    cell = next(host.state.board);
+  }
+}
+
+console.log("\nA two-round game");
+const room3 = await newRoom();
+const h3 = await client(() => ({
+  type: "hello",
+  role: "host",
+  code: room3.code,
+  hostToken: room3.hostToken,
+}));
+const p3 = await client(() => ({
+  type: "hello",
+  role: "player",
+  code: room3.code,
+  playerId: "r-1",
+  name: "Eve",
+}));
+await wait(150);
+h3.send({ type: "saveDraft", draft: makeBoard({ doubleRound: true }) });
+await wait(150);
+h3.send({ type: "startGame" });
+await wait(200);
+check("round 1 is the first board", h3.state.round === 1, String(h3.state.round));
+check("the player is told there are two rounds", p3.state.rounds === 2, String(p3.state.rounds));
+
+await playEveryClue(h3, p3, "r-1");
+check("round 1 pauses at the round end", h3.state.phase === "round-end", h3.state.phase);
+
+h3.send({ type: "startNextRound" });
+await wait(200);
+check("round 2 opened", h3.state.phase === "board" && h3.state.round === 2, h3.state.phase);
+check(
+  "round 2 is worth double",
+  h3.state.board.categories[0].clues[4].value === 1000,
+  String(h3.state.board.categories[0].clues[4].value),
+);
+check(
+  "round 2's daily doubles are not visible to the player",
+  !JSON.stringify(p3.state.board).includes("dailyDouble"),
+);
+
+h3.send({ type: "startNextRound" });
+await wait(150);
+check("a second round-advance is refused", h3.state.round === 2, String(h3.state.round));
+
+console.log("\nGeneration rejects a bad round");
+const badRound = await fetch(BASE + "/api/rooms/" + room3.code + "/generate", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    hostToken: room3.hostToken,
+    roundIndex: 9,
+    categoryIndex: 0,
+    theme: "anything",
+  }),
+});
+check("an out-of-range round is refused", badRound.status === 400, String(badRound.status));
+check(
+  "round 1 was not written into instead",
+  h3.state.board.categories[0].title.startsWith("R"),
+  h3.state.board.categories[0].title,
+);
+
+await playEveryClue(h3, p3, "r-1");
+check("the game ends after the last round", h3.state.phase === "done", h3.state.phase);
 
 console.log(
   "\n" +
