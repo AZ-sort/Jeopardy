@@ -483,6 +483,7 @@ function render(state) {
   renderBoard(state);
   renderScores(state);
   renderClue(state);
+  renderRoundEnd(state);
 }
 
 function renderLobby(state) {
@@ -675,6 +676,33 @@ function renderDailyDouble(state, clue, wagering) {
     : "Daily Double — tap whoever picked this square.";
   return true;
 }
+
+// ------------------------------------------------------------------ round end
+
+/** A scoreboard between boards, so the room gets a beat before round 2. */
+function renderRoundEnd(state) {
+  const atRoundEnd = state.phase === "round-end";
+  el("roundend").hidden = !atRoundEnd;
+  if (!atRoundEnd) return;
+
+  el("re-done").textContent = `End of round ${state.round}.`;
+  el("re-next").textContent = `Start round ${state.round + 1}`;
+
+  const scores = el("re-scores");
+  scores.textContent = "";
+  for (const p of [...state.players].sort((a, b) => b.score - a.score)) {
+    const row = document.createElement("div");
+    row.className = "roundend__row";
+    const name = document.createElement("span");
+    name.textContent = p.name;
+    const score = document.createElement("b");
+    score.textContent = (p.score < 0 ? "−$" : "$") + Math.abs(p.score);
+    row.append(name, score);
+    scores.append(row);
+  }
+}
+
+el("re-next").addEventListener("click", () => socket.send({ type: "startNextRound" }));
 
 el("c-arm").addEventListener("click", () => socket.send({ type: "armBuzzers" }));
 el("c-yes").addEventListener("click", () => socket.send({ type: "judge", correct: true }));

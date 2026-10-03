@@ -216,11 +216,13 @@ function render() {
   } else {
     clueText.textContent = "";
     meta.textContent =
-      state.phase === "lobby"
-        ? "Waiting for the host to start the game."
-        : state.phase === "done"
-          ? "That is the whole board. Final scores are on the big screen."
-          : "Waiting for the host to pick a clue.";
+      state.phase === "round-end"
+        ? "End of the round. Scores are on the big screen."
+        : state.phase === "lobby"
+          ? "Waiting for the host to start the game."
+          : state.phase === "done"
+            ? "That is the whole board. Final scores are on the big screen."
+            : "Waiting for the host to pick a clue.";
   }
 
   if (iBuzzed) {
