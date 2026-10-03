@@ -170,6 +170,9 @@ await wait(200);
 check("game started", host.state.phase === "board", host.state.phase);
 check("board has 2 categories", host.state.board?.categories.length === 2);
 
+/** Daily Doubles played in round 1, wherever they turned up. */
+let dailyDoubles = 0;
+
 /**
  * The Daily Double is hidden at random, so no square is guaranteed ordinary.
  * Opens cells until one is a normal clue, playing out any Daily Double it
@@ -181,7 +184,10 @@ async function openOrdinaryClue(cells) {
     await wait(120);
     if (host.state.phase !== "wager") return { c, q };
 
-    // Found the Daily Double early — play it through so the board moves on.
+    // Found the Daily Double early — play it through so the board moves on,
+    // and count it here. Roughly one run in five probes the square it is
+    // hidden on, and the count below must not depend on which.
+    dailyDoubles++;
     host.send({ type: "assignDailyDouble", playerId: "e2e-ann" });
     await wait(80);
     ann.send({ type: "setWager", amount: 100 });
@@ -227,8 +233,7 @@ function nextUnrevealed(board) {
 let races = 0,
   firstSenderWon = 0,
   noWinner = 0,
-  badNotify = 0,
-  dailyDoubles = 0;
+  badNotify = 0;
 
 // The clue opened for the payload checks above is still sitting open.
 let cell = { c: ordinary.c, q: ordinary.q };
