@@ -1,7 +1,31 @@
 import { connect, postJson, toast, fatal } from "./net.js";
 
-const CLUE_VALUES = [100, 200, 300, 400, 500];
-const NUM_CATEGORIES = 6;
+// Mirrors lib/board.js. The browser cannot import that module — it pulls in
+// zod and there is no build step — so the two copies are kept in step by hand,
+// and the smoke test asserts round 2's values over the wire.
+const ROUND_VALUES = [
+  [100, 200, 300, 400, 500],
+  [200, 400, 600, 800, 1000],
+];
+const CLUE_VALUES = ROUND_VALUES[0];
+const MAX_CATEGORIES = 6;
+const NUM_ROUNDS = ROUND_VALUES.length;
+
+const blankCategory = (title = "", round = 0) => ({
+  title,
+  clues: ROUND_VALUES[round].map((value) => ({
+    value,
+    clue: "",
+    answer: "",
+    revealed: false,
+    wager: null,
+    dailyDouble: false,
+  })),
+});
+
+const blankRound = (round) => ({
+  categories: Array.from({ length: MAX_CATEGORIES }, () => blankCategory("", round)),
+});
 
 const code = new URLSearchParams(location.search).get("code")?.toUpperCase();
 const hostToken = code ? localStorage.getItem("hostToken:" + code) : null;
@@ -78,25 +102,46 @@ function queueDraftSave() {
   saveTimer = setTimeout(() => socket.send({ type: "saveDraft", draft }), 600);
 }
 
+/** Sends the draft now. Adding or removing a column within the debounce
+ *  window would otherwise start the game on the board as it was before. */
+function flushDraftSave() {
+  clearTimeout(saveTimer);
+  socket.send({ type: "saveDraft", draft });
+}
+
 function buildSetup() {
   const slots = el("slots");
   slots.textContent = "";
+  el("s-double").checked = Boolean(draft.options?.doubleRound);
 
-  for (let c = 0; c < NUM_CATEGORIES; c++) {
-    if (!draft.categories[c]) {
-      draft.categories[c] = {
-        title: "",
-        clues: CLUE_VALUES.map((value) => ({
-          value,
-          clue: "",
-          answer: "",
-          revealed: false,
-          wager: null,
-          dailyDouble: false,
-        })),
-      };
+  const rounds = draft.options?.doubleRound ? NUM_ROUNDS : 1;
+  for (let r = 0; r < rounds; r++) {
+    if (!draft.rounds[r]) draft.rounds[r] = blankRound(r);
+
+    if (rounds > 1) {
+      const head = document.createElement("h2");
+      head.className = "slots__round";
+      head.textContent = r === 0 ? "Round 1" : "Round 2 — double values";
+      slots.append(head);
     }
-    slots.append(buildSlot(c));
+
+    // Exactly the columns the host chose — a round may hold one to six.
+    for (let c = 0; c < draft.rounds[r].categories.length; c++) {
+      slots.append(buildSlot(r, c));
+    }
+
+    if (draft.rounds[r].categories.length < MAX_CATEGORIES) {
+      const add = document.createElement("button");
+      add.className = "btn btn--quiet slots__add";
+      add.type = "button";
+      add.textContent = "Add category";
+      add.addEventListener("click", () => {
+        draft.rounds[r].categories.push(blankCategory("", r));
+        queueDraftSave();
+        buildSetup();
+      });
+      slots.append(add);
+    }
   }
   setupBuilt = true;
   // Account state decides whether the board list can be populated at all, so
@@ -104,28 +149,78 @@ function buildSetup() {
   refreshAccount();
 }
 
+el("s-double").addEventListener("change", (e) => {
+  draft.options.doubleRound = e.target.checked;
+  queueDraftSave();
+  // Round 2's slots appear or disappear; anything typed into them stays in the
+  // draft either way, so toggling off and on again loses nothing.
+  buildSetup();
+});
+
 /** Resizes a textarea to fit its content. */
 function autoGrow(box) {
   box.style.height = "auto";
   box.style.height = box.scrollHeight + 2 + "px";
 }
 
-function buildSlot(c) {
-  const cat = draft.categories[c];
+/** Two rounds mean two identical-looking grids; a screen reader needs them apart. */
+function roundLabel(r, c) {
+  return "Round " + (r + 1) + " category " + (c + 1);
+}
+
+/** "round:category" for every slot with a generation in flight. */
+const generating = new Set();
+
+/** True while any column in this round is being written into. */
+function roundIsGenerating(r) {
+  for (const key of generating) if (key.startsWith(`${r}:`)) return true;
+  return false;
+}
+
+/** Re-evaluates every × after a generation starts or finishes. */
+function refreshRemoveButtons() {
+  for (const slot of document.querySelectorAll(".slot")) {
+    const r = Number(slot.dataset.round);
+    const btn = slot.querySelector(".slot__remove");
+    if (btn) btn.disabled = draft.rounds[r].categories.length <= 1 || roundIsGenerating(r);
+  }
+}
+
+function buildSlot(r, c) {
+  const cat = draft.rounds[r].categories[c];
 
   const slot = document.createElement("div");
   slot.className = "slot";
   slot.dataset.cat = String(c);
+  slot.dataset.round = String(r);
 
   const n = document.createElement("span");
   n.className = "slot__n";
   n.textContent = "Category " + (c + 1);
 
+  const remove = document.createElement("button");
+  remove.className = "slot__remove";
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.title = "Remove this category";
+  remove.setAttribute("aria-label", "Remove " + roundLabel(r, c).toLowerCase());
+  // Locked while ANY column in this round is being written into, not just this
+  // one: removing an earlier column renumbers the generating one, and the
+  // arriving category would land on whichever category shuffled into its slot.
+  remove.disabled = draft.rounds[r].categories.length <= 1 || roundIsGenerating(r);
+  remove.addEventListener("click", () => {
+    draft.rounds[r].categories.splice(c, 1);
+    queueDraftSave();
+    // Every later column just renumbered, so redraw rather than patch.
+    buildSetup();
+  });
+  n.append(remove);
+
   const title = document.createElement("input");
   title.type = "text";
   title.placeholder = "Category name";
   title.value = cat.title;
-  title.setAttribute("aria-label", "Category " + (c + 1) + " name");
+  title.setAttribute("aria-label", roundLabel(r, c) + " name");
   title.addEventListener("input", () => {
     cat.title = title.value;
     queueDraftSave();
@@ -137,7 +232,7 @@ function buildSlot(c) {
   const theme = document.createElement("input");
   theme.type = "text";
   theme.placeholder = "Theme, e.g. Pokemon";
-  theme.setAttribute("aria-label", "Theme for category " + (c + 1));
+  theme.setAttribute("aria-label", "Theme for " + roundLabel(r, c).toLowerCase());
   const genBtn = document.createElement("button");
   genBtn.className = "btn";
   genBtn.textContent = "Fill with AI";
@@ -148,20 +243,29 @@ function buildSlot(c) {
     if (!wanted) return toast("Type a theme first, like “Pokemon” or “90s rap”.");
     genBtn.disabled = true;
     genBtn.textContent = "Writing…";
+    // Locks every × in this round until the write lands or fails.
+    generating.add(`${r}:${c}`);
+    refreshRemoveButtons();
     try {
       const { category } = await postJson("/api/rooms/" + code + "/generate", {
         hostToken,
+        roundIndex: r,
         categoryIndex: c,
         theme: wanted,
       });
-      draft.categories[c] = category;
+      draft.rounds[r].categories[c] = category;
+      generating.delete(`${r}:${c}`);
       // Replace the slot wholesale: every field in it changed.
-      slot.replaceWith(buildSlot(c));
+      slot.replaceWith(buildSlot(r, c));
+      // The other columns in this round were locked while it ran.
+      refreshRemoveButtons();
       toast("Wrote “" + category.title + "”. Check it before you play.", "good");
     } catch (err) {
+      generating.delete(`${r}:${c}`);
       toast(err.message);
       genBtn.disabled = false;
       genBtn.textContent = "Fill with AI";
+      refreshRemoveButtons();
     }
   };
 
@@ -216,7 +320,10 @@ function buildSlot(c) {
   return slot;
 }
 
-el("start").addEventListener("click", () => socket.send({ type: "startGame" }));
+el("start").addEventListener("click", () => {
+  flushDraftSave();
+  socket.send({ type: "startGame" });
+});
 
 /**
  * Saved boards belong to an account, so they follow you to any device.
@@ -366,7 +473,22 @@ el("saved").addEventListener("change", async (e) => {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error ?? "Could not load that board.");
 
-    draft = { categories: body.board.categories.slice(0, NUM_CATEGORIES) };
+    // A saved board is the full wrapper. Clamp each round to the ceiling in
+    // case it was written by a wider build than this one.
+    draft = {
+      // Both dimensions are clamped. An over-wide board the server would
+      // silently reject leaves the screen and the server disagreeing about
+      // what is loaded, and Start then plays the older board with no error.
+      rounds: (body.board.rounds ?? []).slice(0, NUM_ROUNDS).map((round) => ({
+        categories: (round.categories ?? []).slice(0, MAX_CATEGORIES),
+      })),
+      final: body.board.final ?? null,
+      options: {
+        doubleRound: Boolean(body.board.options?.doubleRound),
+        finalRound: Boolean(body.board.options?.finalRound),
+      },
+    };
+    if (!draft.rounds.length) draft.rounds = [blankRound(0)];
     buildSetup();
     el("board-name").value = name;
     socket.send({ type: "saveDraft", draft });
@@ -393,6 +515,7 @@ function render(state) {
   renderBoard(state);
   renderScores(state);
   renderClue(state);
+  renderRoundEnd(state);
 }
 
 function renderLobby(state) {
@@ -585,6 +708,33 @@ function renderDailyDouble(state, clue, wagering) {
     : "Daily Double — tap whoever picked this square.";
   return true;
 }
+
+// ------------------------------------------------------------------ round end
+
+/** A scoreboard between boards, so the room gets a beat before round 2. */
+function renderRoundEnd(state) {
+  const atRoundEnd = state.phase === "round-end";
+  el("roundend").hidden = !atRoundEnd;
+  if (!atRoundEnd) return;
+
+  el("re-done").textContent = `End of round ${state.round}.`;
+  el("re-next").textContent = `Start round ${state.round + 1}`;
+
+  const scores = el("re-scores");
+  scores.textContent = "";
+  for (const p of [...state.players].sort((a, b) => b.score - a.score)) {
+    const row = document.createElement("div");
+    row.className = "roundend__row";
+    const name = document.createElement("span");
+    name.textContent = p.name;
+    const score = document.createElement("b");
+    score.textContent = (p.score < 0 ? "−$" : "$") + Math.abs(p.score);
+    row.append(name, score);
+    scores.append(row);
+  }
+}
+
+el("re-next").addEventListener("click", () => socket.send({ type: "startNextRound" }));
 
 el("c-arm").addEventListener("click", () => socket.send({ type: "armBuzzers" }));
 el("c-yes").addEventListener("click", () => socket.send({ type: "judge", correct: true }));

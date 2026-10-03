@@ -994,6 +994,100 @@ textarea {
   color: var(--coral);
 }
 
+/* ---------------------------------------------------------- setup toggles */
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--cream);
+}
+
+.toggle small {
+  display: block;
+  color: var(--cream-dim);
+}
+
+.toggle input:disabled + span {
+  opacity: 0.45;
+}
+
+.slot__remove {
+  border: none;
+  background: none;
+  color: var(--cream-dim);
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 0 6px;
+}
+
+.slot__remove:hover:not(:disabled) {
+  color: var(--coral);
+}
+
+.slot__remove:disabled {
+  opacity: 0.25;
+}
+
+.slots__add {
+  margin: 4px 0 8px;
+}
+
+.slots__round {
+  font-family: var(--display);
+  font-size: clamp(1.4rem, 3vw, 2.2rem);
+  color: var(--brass);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 26px 0 10px;
+}
+
+/* ---------------------------------------------------------- round end */
+
+/*
+ * Takes the screen over the way `.clue` does. Without this it renders below a
+ * full-height `#game`, which puts "Start round 2" off the bottom of a TV — the
+ * one control that moves the game on.
+ */
+.roundend {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--stage);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 20px;
+}
+
+.roundend__done {
+  font-family: var(--display);
+  font-size: clamp(2rem, 6vw, 4rem);
+  text-transform: uppercase;
+  color: var(--brass);
+  margin: 0;
+}
+
+.roundend__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 40px;
+  min-width: min(420px, 80vw);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--panel);
+  color: var(--cream);
+}
+
 /* ---------------------------------------------------------- daily double */
 
 .dd-splash {

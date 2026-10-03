@@ -28,7 +28,9 @@ import {
   validateBoard,
   compactBoard,
   collectAnswers,
-  NUM_CATEGORIES,
+  MAX_CATEGORIES,
+  NUM_ROUNDS,
+  ROUND_VALUES,
 } from "./lib/board.js";
 import {
   generateCategory,
@@ -129,7 +131,10 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws" });
+// The same 1mb ceiling the HTTP side uses. Without it `ws` allows 100MB a
+// frame and `JSON.parse` runs on all of it before any handler can object — a
+// draft is the only large message here and a full two-round board is ~40KB.
+const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 1024 * 1024 });
 
 /** code -> Room */
 const rooms = new Map();
@@ -241,22 +246,38 @@ app.post("/api/rooms/:code/generate", async (req, res) => {
     return res.status(403).json({ error: "Not the host of this game." });
   }
 
+  const round = Number(req.body?.roundIndex ?? 0);
   const index = Number(req.body?.categoryIndex);
-  if (!Number.isInteger(index) || index < 0 || index >= NUM_CATEGORIES) {
+  if (!Number.isInteger(round) || round < 0 || round >= NUM_ROUNDS) {
+    return res.status(400).json({ error: "Bad round." });
+  }
+  if (!Number.isInteger(index) || index < 0 || index >= MAX_CATEGORIES) {
     return res.status(400).json({ error: "Bad category slot." });
   }
-  if (room.generating.has(index)) {
+  // A column can be removed between the click and this request arriving.
+  if (!room.draft.rounds[round]?.categories[index]) {
+    return res.status(400).json({ error: "That category is no longer on the board." });
+  }
+
+  // One in-flight generation per square, not per category index, or the two
+  // rounds would block each other's slot 3.
+  const slot = `${round}:${index}`;
+  if (room.generating.has(slot)) {
     return res.status(409).json({ error: "That category is already generating." });
   }
 
   const blocked = generationBlocked(req.ip);
   if (blocked) return res.status(429).json({ error: blocked });
 
-  room.generating.add(index);
+  room.generating.add(slot);
   try {
     const avoid = collectAnswers(room.draft);
     const category = await generateCategory(req.body?.theme, avoid);
-    room.draft.categories[index] = category;
+    // Generation always returns round 1's values; round 2 runs double.
+    category.clues.forEach((clue, i) => {
+      clue.value = ROUND_VALUES[round][i];
+    });
+    room.draft.rounds[round].categories[index] = category;
     broadcast(room);
     res.json({ category });
   } catch (err) {
@@ -266,7 +287,7 @@ app.post("/api/rooms/:code/generate", async (req, res) => {
     console.error("generate failed:", err);
     res.status(500).json({ error: "Category generation failed unexpectedly." });
   } finally {
-    room.generating.delete(index);
+    room.generating.delete(slot);
   }
 });
 
@@ -385,8 +406,10 @@ app.post("/api/boards", async (req, res) => {
 
   // Save the compacted board so empty slots are not written out, but keep
   // partially-filled categories: a work-in-progress board is worth saving.
-  const board = compactBoard(req.body?.board ?? { categories: [] });
-  if (!board.categories.length) return res.status(400).json({ error: "Nothing to save yet." });
+  const board = compactBoard(req.body?.board ?? blankBoard());
+  if (!board.rounds[0]?.categories.length) {
+    return res.status(400).json({ error: "Nothing to save yet." });
+  }
 
   try {
     await db.saveBoard(userId, name, board);
@@ -561,6 +584,25 @@ function handleWager(ws, room, msg) {
   broadcast(room);
 }
 
+/**
+ * A cheap shape and size check on a half-written board from a socket.
+ *
+ * It is not `validateBoard` — a draft is incomplete on purpose and must stay
+ * saveable. It only bounds what the rest of the server will later walk, so a
+ * host token cannot pin the event loop with a draft of a million categories.
+ */
+function draftLooksSane(draft) {
+  if (!draft || !Array.isArray(draft.rounds)) return false;
+  if (draft.rounds.length > NUM_ROUNDS) return false;
+  return draft.rounds.every(
+    (round) =>
+      round &&
+      Array.isArray(round.categories) &&
+      round.categories.length <= MAX_CATEGORIES &&
+      round.categories.every((cat) => cat && Array.isArray(cat.clues) && cat.clues.length <= 10),
+  );
+}
+
 function handleHostMessage(ws, room, msg) {
   const game = room.game;
   let result = { ok: true };
@@ -569,9 +611,17 @@ function handleHostMessage(ws, room, msg) {
     case "saveDraft": {
       // The host page owns draft editing; the server just holds it so a refresh
       // or a second host screen does not lose the work.
-      if (msg.draft && Array.isArray(msg.draft.categories)) {
+      //
+      // The draft is never schema-validated — it is half-written by definition —
+      // so it is size-checked here instead. Everything downstream walks these
+      // arrays, and a draft is whatever a socket sent us.
+      if (draftLooksSane(msg.draft)) {
         room.draft = msg.draft;
         broadcast(room);
+      } else {
+        // Silently dropping it would leave the host's screen and the server
+        // holding different boards, and Start would play the older one.
+        toast(ws, "That board was not saved — it is the wrong shape or too big.");
       }
       return;
     }
@@ -585,6 +635,9 @@ function handleHostMessage(ws, room, msg) {
     }
     case "openClue":
       result = G.openClue(game, Number(msg.c), Number(msg.q));
+      break;
+    case "startNextRound":
+      result = G.startNextRound(game);
       break;
     case "assignDailyDouble":
       result = G.assignDailyDouble(game, String(msg.playerId));
@@ -627,6 +680,7 @@ function handleHostMessage(ws, room, msg) {
       "wrong-phase": "Cannot do that right now.",
       "unknown-player": "That player is not in this game.",
       "no-wager-player": "Pick who found the Daily Double first.",
+      "no-more-rounds": "That was the last round.",
       "bad-increment": "Bets go in steps of $100.",
       "out-of-range": "That is outside what they are allowed to bet.",
     };

@@ -89,16 +89,23 @@ game. Reading them through takes a minute and is worth it.
 
 ## Playing
 
-1. **Build the board.** Six categories, five clues each. Write them, generate
-   them, or load one you saved. You can play with fewer than six — empty
-   categories are dropped.
-2. **Start the game** once people have joined. The board locks at this point.
-3. **Pick a clue.** It fills the screen. Read it out loud.
-4. **Open the buzzers** when you have finished reading. Until you do, every
+1. **Build the board.** Up to six categories, five clues each. Write them,
+   generate them, or load one you saved. The **×** on a column removes it and
+   **Add category** puts one back, so a quick three-category round is a couple
+   of clicks. One category is the minimum.
+2. **Tick what you are playing.** **Second round** adds a whole second board at
+   $200–$1000, authored now so nobody waits mid-game. Both boards are written
+   before you start; only the first is on screen when you do.
+3. **Start the game** once people have joined. The board locks at this point.
+4. **Pick a clue.** It fills the screen. Read it out loud.
+5. **Open the buzzers** when you have finished reading. Until you do, every
    phone says *Wait* — this is what stops people mashing the button early.
-5. **Rule on it.** Whoever buzzed first appears on screen. Correct adds the
+6. **Rule on it.** Whoever buzzed first appears on screen. Correct adds the
    value; Wrong subtracts it, locks that player out of this clue, and re-opens
    the buzzers for everyone else.
+7. **Start round 2**, if you are playing one. The board pauses on a scoreboard
+   when the last clue closes, so you can read the scores out before the second
+   board goes up. Round 2 runs $200–$1000 and hides **two** Daily Doubles.
 
 Host keyboard shortcuts, since you will be looking at the room and not the
 screen: `Space` opens the buzzers, `Y` correct, `N` wrong, `Esc` back to board.
@@ -259,8 +266,8 @@ OpenRouter, covering the request shape and every failure branch without a key.
   friends elsewhere, expose the port with something like
   `cloudflared tunnel --url http://localhost:3000` and share that address.
 - **Not yet built:** Final Jeopardy, a Double Jeopardy round, timers, sound.
-- **One Daily Double per board.** The real show has two in the second round;
-  that arrives with the second board.
+- **One Daily Double in round 1, two in round 2**, as the show plays it. They
+  never share a category unless the round is too short to avoid it.
 - **Fonts come from Google Fonts.** Playing fully offline falls back to system
   faces, which looks plainer but works.
 - **Schema compliance varies by model.** OpenRouter routes a model through

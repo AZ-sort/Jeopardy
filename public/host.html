@@ -38,6 +38,17 @@
         and start it again &mdash; or just write the clues yourself below.
       </p>
 
+      <div class="toggles">
+        <label class="toggle">
+          <input type="checkbox" id="s-double" />
+          <span>Second round <small>another board at $200–$1000</small></span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="s-final" disabled />
+          <span>Final Jeopardy <small>coming soon</small></span>
+        </label>
+      </div>
+
       <div class="slots" id="slots"></div>
 
       <div class="setup__actions">
@@ -114,6 +125,12 @@
         <button class="btn btn--quiet" id="c-reveal">Show answer to all</button>
         <button class="btn btn--quiet" id="c-close">Back to board</button>
       </div>
+    </div>
+
+    <div class="roundend" id="roundend" hidden>
+      <p class="roundend__done" id="re-done"></p>
+      <div class="roundend__scores" id="re-scores"></div>
+      <button class="btn btn--go" id="re-next">Start round 2</button>
     </div>
 
     <script type="module" src="/js/host.js"></script>
