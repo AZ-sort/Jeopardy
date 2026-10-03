@@ -25,6 +25,7 @@ import {
   finalMaxWager,
   setFinalWager,
   allFinalWagersIn,
+  judgeFinal,
   revealFinalClue,
   submitFinalAnswer,
   closeFinalAnswers,
@@ -953,4 +954,157 @@ test("a player sees their own answer and nobody else's", () => {
     !JSON.stringify(view.final).includes("theirs"),
     "another player's answer leaked into the player view",
   );
+});
+
+/** Everyone has answered and the window has shut. */
+function atFinalReveal() {
+  const g = atFinalClue(1_000_000);
+  submitFinalAnswer(g, "p1", "Ann's answer", 1_000_100);
+  submitFinalAnswer(g, "p2", "Bo's answer", 1_000_100);
+  closeFinalAnswers(g);
+  return g;
+}
+
+test("the reveal runs poorest first", () => {
+  const g = atFinalReveal(); // Ann 1000, Bo 400
+  assert.deepEqual(g.finalRound.order, ["p2", "p1"]);
+  assert.equal(g.phase, PHASE.FINAL_REVEAL);
+});
+
+test("players level on score are revealed in the order they joined", () => {
+  const g = atFinal();
+  adjustScore(g, "p2", 600); // Both on 1000.
+  startFinal(g);
+  setFinalWager(g, "p1", 100);
+  setFinalWager(g, "p2", 100);
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+  assert.deepEqual(g.finalRound.order, ["p1", "p2"], "a tie must not be left to chance");
+});
+
+test("a correct final answer pays the player's own bet", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, true); // Bo first, bet 200
+  assert.equal(g.players.find((p) => p.id === "p2").score, 600);
+});
+
+test("a wrong final answer takes the player's own bet", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, false);
+  assert.equal(g.players.find((p) => p.id === "p2").score, 200);
+});
+
+test("final jeopardy never takes anyone below nothing", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 1000); // Ann stakes the lot.
+  setFinalWager(g, "p2", 400); // Bo stakes the lot.
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+  judgeFinal(g, false);
+  judgeFinal(g, false);
+
+  for (const p of g.players) assert.ok(p.score >= 0, `${p.name} went to ${p.score}`);
+});
+
+test("ruling on the last player ends the game", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, true);
+  assert.equal(g.phase, PHASE.FINAL_REVEAL);
+  judgeFinal(g, true);
+  assert.equal(g.phase, PHASE.DONE);
+});
+
+test("ruling past the last player is refused", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, true);
+  judgeFinal(g, true);
+  const res = judgeFinal(g, true);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "wrong-phase");
+});
+
+test("a whole room on nothing still finishes the game", () => {
+  const g = atFinal();
+  adjustScore(g, "p1", -1000);
+  adjustScore(g, "p2", -400); // Both on zero.
+  startFinal(g);
+  assert.equal(allFinalWagersIn(g), true, "nobody can bet, so nobody is waited on");
+
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+  judgeFinal(g, true);
+  judgeFinal(g, false);
+
+  assert.equal(g.phase, PHASE.DONE);
+  for (const p of g.players) assert.equal(p.score, 0, "a zero bet cannot move a score");
+});
+
+test("an unsubmitted answer is revealed as blank and scores either way", () => {
+  const g = atFinalClue(1_000_000);
+  submitFinalAnswer(g, "p1", "only Ann answered", 1_000_100);
+  closeFinalAnswers(g);
+
+  const view = publicState(g, { forHost: true });
+  const bo = view.final.revealed.find((r) => r.playerId === "p2");
+  assert.equal(bo, undefined, "nobody is revealed until the host turns them over");
+  judgeFinal(g, false); // Bo first, blank answer, bet 200
+  assert.equal(g.players.find((p) => p.id === "p2").score, 200);
+});
+
+test("only players already turned over appear in the player view", () => {
+  const g = atFinalReveal();
+  const before = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(before.final.revealed.length, 0);
+  assert.ok(
+    !JSON.stringify(before.final).includes("Bo's answer"),
+    "an unrevealed answer leaked into the player view",
+  );
+
+  judgeFinal(g, true);
+  const after = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(after.final.revealed.length, 1);
+  assert.equal(after.final.revealed[0].answer, "Bo's answer");
+  assert.equal(after.final.revealed[0].wager, 200);
+});
+
+test("nothing of another player's leaks into any final phase payload", () => {
+  // A sweep across every phase of the round.
+  //
+  // Bets are checked structurally rather than by string match: every bet is a
+  // round hundred, so it collides with scores and board values, which are
+  // public. What must never appear is the raw wagers/answers maps or another
+  // player's entry in `revealed`. Text secrets are distinctive, so those are
+  // matched directly.
+  const g = atFinal();
+  startFinal(g);
+
+  const forAnn = () => publicState(g, { forHost: false, playerId: "p1" }).final;
+  const noMaps = (f, when) => {
+    assert.equal(f.wagers, undefined, `the wagers map was serialized ${when}`);
+    assert.equal(f.answers, undefined, `the answers map was serialized ${when}`);
+    assert.equal(f.current, null, `the face-up card reached a phone ${when}`);
+  };
+
+  setFinalWager(g, "p2", 400);
+  let f = forAnn();
+  noMaps(f, "during betting");
+  assert.equal(f.myWager, null, "Ann has not bet yet");
+  assert.equal(f.clue, null, "the clue leaked during betting");
+
+  setFinalWager(g, "p1", 300);
+  revealFinalClue(g, 1_000_000);
+  submitFinalAnswer(g, "p2", "Bo's secret", 1_000_100);
+  f = forAnn();
+  noMaps(f, "while answering");
+  assert.equal(f.myWager, 300, "Ann should see her own bet");
+  assert.ok(!JSON.stringify(f).includes("Bo's secret"), "an answer leaked while answering");
+  assert.equal(f.answer, null, "the authored answer reached a phone");
+
+  closeFinalAnswers(g);
+  f = forAnn();
+  noMaps(f, "before the reveal");
+  assert.equal(f.revealed.length, 0, "someone was revealed before being turned over");
+  assert.ok(!JSON.stringify(f).includes("Bo's secret"), "an answer leaked before the reveal");
+  assert.equal(f.answer, null, "the authored answer reached a phone");
 });
