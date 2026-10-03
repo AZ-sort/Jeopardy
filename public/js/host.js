@@ -92,6 +92,7 @@ function buildSetup() {
           answer: "",
           revealed: false,
           wager: null,
+          dailyDouble: false,
         })),
       };
     }
@@ -487,7 +488,8 @@ function renderScores(state) {
 let peeking = false;
 
 function renderClue(state) {
-  const open = state.phase === "clue" || state.phase === "buzzed";
+  const wagering = state.phase === "wager";
+  const open = state.phase === "clue" || state.phase === "buzzed" || wagering;
   el("clue").hidden = !open;
   if (!open) {
     peeking = false;
@@ -499,6 +501,10 @@ function renderClue(state) {
   el("c-val").textContent = "$" + clue.value;
   el("c-text").textContent = clue.clue;
   el("c-armed").hidden = !state.buzzersArmed;
+
+  // While the bet is open the whole control bar is replaced by the picker, so
+  // there is nothing else to draw.
+  if (renderDailyDouble(state, clue, wagering)) return;
 
   // Public answer: only once the host has shown it to the room.
   el("c-ans").hidden = !state.answerRevealed;
@@ -518,7 +524,11 @@ function renderClue(state) {
     who.textContent = "";
     const strong = document.createElement("strong");
     strong.textContent = buzzed.name;
-    who.append(strong, document.createTextNode(" buzzed in"));
+    // On a Daily Double they were handed the clue rather than buzzing for it.
+    who.append(
+      strong,
+      document.createTextNode(clue.dailyDouble ? " is answering" : " buzzed in"),
+    );
   } else if (state.buzzersArmed) {
     who.textContent = "Waiting for a buzz…";
   } else if (state.lockedOut.length) {
@@ -531,6 +541,49 @@ function renderClue(state) {
   el("c-no").hidden = !buzzed;
   el("c-arm").hidden = Boolean(buzzed) || state.buzzersArmed || state.answerRevealed;
   el("c-reveal").hidden = state.answerRevealed;
+}
+
+/**
+ * Draws the Daily Double takeover. Returns true while the bet is still open,
+ * which tells `renderClue` the ordinary controls do not apply yet.
+ *
+ * The host picks the finder here because Buzz Night has no concept of board
+ * control — the host drives the board, so only they know who chose the square.
+ */
+function renderDailyDouble(state, clue, wagering) {
+  el("c-dd").hidden = !clue.dailyDouble;
+  el("c-ddpick").hidden = !wagering || Boolean(state.wagerPlayer);
+  el("c-ddwait").hidden = !wagering || !state.wagerPlayer;
+
+  if (!wagering) return false;
+
+  // The clue stays off the host's main panel too, so a host reading aloud
+  // cannot accidentally give it away before the bet is locked.
+  el("c-text").textContent = "";
+
+  if (state.wagerPlayer) {
+    const who = state.players.find((p) => p.id === state.wagerPlayer);
+    el("c-ddwait").textContent =
+      `${who?.name ?? "They"} is betting — up to $${state.wagerMax}. Their phone has the pad.`;
+  } else {
+    const row = el("c-ddplayers");
+    row.textContent = "";
+    for (const p of state.players) {
+      const btn = document.createElement("button");
+      btn.className = "btn btn--quiet";
+      btn.textContent = p.name;
+      btn.addEventListener("click", () =>
+        socket.send({ type: "assignDailyDouble", playerId: p.id }),
+      );
+      row.append(btn);
+    }
+  }
+
+  for (const id of ["c-yes", "c-no", "c-arm", "c-reveal", "c-peek"]) el(id).hidden = true;
+  el("c-who").textContent = state.wagerPlayer
+    ? "Waiting for the bet."
+    : "Daily Double — tap whoever picked this square.";
+  return true;
 }
 
 el("c-arm").addEventListener("click", () => socket.send({ type: "armBuzzers" }));
