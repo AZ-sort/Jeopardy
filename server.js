@@ -158,6 +158,8 @@ function createRoom() {
     game: G.createGame(code),
     /** The board being authored, before the game starts. */
     draft: blankBoard(),
+    /** Handle for Final Jeopardy's answer clock; see armFinalTimer. */
+    finalTimer: null,
     hosts: new Set(),
     /** playerId -> ws */
     players: new Map(),
@@ -190,9 +192,13 @@ function send(ws, payload) {
 }
 
 function broadcast(room) {
+  // The server's clock travels with the state so a phone can measure its own
+  // offset once and count a Final Jeopardy deadline down correctly even if
+  // its own clock is wrong.
+  const now = Date.now();
   const hostState = G.publicState(room.game, { forHost: true });
   for (const ws of room.hosts) {
-    send(ws, { type: "state", state: hostState, draft: room.draft });
+    send(ws, { type: "state", state: hostState, draft: room.draft, now });
   }
   // One payload per player, not one shared payload: in Final Jeopardy each
   // phone must see its own bet and answer and nobody else's, so the states
@@ -202,6 +208,7 @@ function broadcast(room) {
       type: "state",
       state: G.publicState(room.game, { forHost: false, playerId }),
       you: playerId,
+      now,
     });
   }
 }
@@ -550,6 +557,8 @@ function handleHello(ws, msg) {
 
 function handlePlayerMessage(ws, room, msg) {
   if (msg.type === "setWager") return handleWager(ws, room, msg);
+  if (msg.type === "setFinalWager") return handleFinalWager(ws, room, msg);
+  if (msg.type === "submitFinalAnswer") return handleFinalAnswer(ws, room, msg);
   if (msg.type !== "buzz") return;
 
   const result = G.buzz(room.game, ws.meta.playerId, Date.now());
@@ -564,6 +573,64 @@ function handlePlayerMessage(ws, room, msg) {
       type: "buzz-rejected",
       reason: result.reason,
       message: reasons[result.reason] ?? "Buzz not accepted.",
+    });
+  }
+  broadcast(room);
+}
+
+/**
+ * The game's only timer. `lib/game.js` holds the deadline and stays pure; the
+ * countdown itself is the server's business, and the handle lives on the room
+ * so it can be cancelled when the host calls time early.
+ */
+function armFinalTimer(room) {
+  clearFinalTimer(room);
+  room.finalTimer = setTimeout(() => {
+    room.finalTimer = null;
+    // A no-op if the host already closed the window — the rule checks phase.
+    if (G.closeFinalAnswers(room.game).ok) broadcast(room);
+  }, G.FINAL_ANSWER_SECONDS * 1000);
+}
+
+function clearFinalTimer(room) {
+  if (room.finalTimer) {
+    clearTimeout(room.finalTimer);
+    room.finalTimer = null;
+  }
+}
+
+/** A Final Jeopardy bet, sent in secret by each player. */
+function handleFinalWager(ws, room, msg) {
+  const result = G.setFinalWager(room.game, ws.meta.playerId, Number(msg.amount));
+  if (!result.ok) {
+    const reasons = {
+      "not-playing-final": "You joined after the betting started.",
+      "bad-increment": "Bets go in steps of $100.",
+      "bad-amount": "That is not a number.",
+      "out-of-range": "You cannot bet more than you have.",
+      "wrong-phase": "Nothing to bet on right now.",
+    };
+    return send(ws, {
+      type: "wager-rejected",
+      reason: result.reason,
+      message: reasons[result.reason] ?? "Bet not accepted.",
+    });
+  }
+  broadcast(room);
+}
+
+function handleFinalAnswer(ws, room, msg) {
+  const result = G.submitFinalAnswer(room.game, ws.meta.playerId, msg.answer, Date.now());
+  if (!result.ok) {
+    const reasons = {
+      "too-late": "Time is up.",
+      "not-playing-final": "You joined after the betting started.",
+      "wrong-phase": "Nothing to answer right now.",
+    };
+    return send(ws, {
+      type: "answer-rejected",
+      reason: result.reason,
+      message: reasons[result.reason] ?? "Answer not accepted.",
     });
   }
   broadcast(room);
@@ -645,6 +712,22 @@ function handleHostMessage(ws, room, msg) {
     case "startNextRound":
       result = G.startNextRound(game);
       break;
+    case "startFinal":
+      result = G.startFinal(game);
+      break;
+    case "revealFinalClue":
+      result = G.revealFinalClue(game, Date.now());
+      if (result.ok) armFinalTimer(room);
+      break;
+    case "endFinalAnswers":
+      // The host calling time early. Cancel the timeout so it cannot fire
+      // into a round that has already moved on.
+      clearFinalTimer(room);
+      result = G.closeFinalAnswers(game);
+      break;
+    case "judgeFinal":
+      result = G.judgeFinal(game, Boolean(msg.correct));
+      break;
     case "assignDailyDouble":
       result = G.assignDailyDouble(game, String(msg.playerId));
       break;
@@ -687,6 +770,9 @@ function handleHostMessage(ws, room, msg) {
       "unknown-player": "That player is not in this game.",
       "no-wager-player": "Pick who found the Daily Double first.",
       "no-more-rounds": "That was the last round.",
+      "no-final": "This board has no Final Jeopardy.",
+      "bets-outstanding": "Someone has not bet yet.",
+      "nobody-left": "Everyone has been ruled on.",
       "bad-increment": "Bets go in steps of $100.",
       "out-of-range": "That is outside what they are allowed to bet.",
     };
@@ -701,7 +787,11 @@ setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     const idle = room.hosts.size === 0 && room.players.size === 0;
-    if (idle && now - room.lastSeen > ROOM_TTL_MS) rooms.delete(code);
+    if (idle && now - room.lastSeen > ROOM_TTL_MS) {
+      // Drop the answer clock with the room, or it holds a reference to it.
+      clearFinalTimer(room);
+      rooms.delete(code);
+    }
   }
 
   const hourAgo = now - 60 * 60 * 1000;
