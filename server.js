@@ -131,7 +131,10 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws" });
+// The same 1mb ceiling the HTTP side uses. Without it `ws` allows 100MB a
+// frame and `JSON.parse` runs on all of it before any handler can object — a
+// draft is the only large message here and a full two-round board is ~40KB.
+const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 1024 * 1024 });
 
 /** code -> Room */
 const rooms = new Map();
