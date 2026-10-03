@@ -1019,6 +1019,27 @@ textarea {
   opacity: 0.45;
 }
 
+.slot__remove {
+  border: none;
+  background: none;
+  color: var(--cream-dim);
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 0 6px;
+}
+
+.slot__remove:hover:not(:disabled) {
+  color: var(--coral);
+}
+
+.slot__remove:disabled {
+  opacity: 0.25;
+}
+
+.slots__add {
+  margin: 4px 0 8px;
+}
+
 .slots__round {
   font-family: var(--display);
   font-size: clamp(1.4rem, 3vw, 2.2rem);

@@ -118,11 +118,22 @@ function buildSetup() {
       slots.append(head);
     }
 
-    for (let c = 0; c < MAX_CATEGORIES; c++) {
-      if (!draft.rounds[r].categories[c]) {
-        draft.rounds[r].categories[c] = blankCategory("", r);
-      }
+    // Exactly the columns the host chose — a round may hold one to six.
+    for (let c = 0; c < draft.rounds[r].categories.length; c++) {
       slots.append(buildSlot(r, c));
+    }
+
+    if (draft.rounds[r].categories.length < MAX_CATEGORIES) {
+      const add = document.createElement("button");
+      add.className = "btn btn--quiet slots__add";
+      add.type = "button";
+      add.textContent = "Add category";
+      add.addEventListener("click", () => {
+        draft.rounds[r].categories.push(blankCategory("", r));
+        queueDraftSave();
+        buildSetup();
+      });
+      slots.append(add);
     }
   }
   setupBuilt = true;
@@ -150,6 +161,9 @@ function roundLabel(r, c) {
   return "Round " + (r + 1) + " category " + (c + 1);
 }
 
+/** "round:category" for every slot with a generation in flight. */
+const generating = new Set();
+
 function buildSlot(r, c) {
   const cat = draft.rounds[r].categories[c];
 
@@ -160,6 +174,23 @@ function buildSlot(r, c) {
   const n = document.createElement("span");
   n.className = "slot__n";
   n.textContent = "Category " + (c + 1);
+
+  const remove = document.createElement("button");
+  remove.className = "slot__remove";
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.title = "Remove this category";
+  remove.setAttribute("aria-label", "Remove " + roundLabel(r, c).toLowerCase());
+  // Never while this column is being written into: removal renumbers
+  // everything after it, so the arriving category would land elsewhere.
+  remove.disabled = draft.rounds[r].categories.length <= 1 || generating.has(`${r}:${c}`);
+  remove.addEventListener("click", () => {
+    draft.rounds[r].categories.splice(c, 1);
+    queueDraftSave();
+    // Every later column just renumbered, so redraw rather than patch.
+    buildSetup();
+  });
+  n.append(remove);
 
   const title = document.createElement("input");
   title.type = "text";
@@ -188,6 +219,9 @@ function buildSlot(r, c) {
     if (!wanted) return toast("Type a theme first, like “Pokemon” or “90s rap”.");
     genBtn.disabled = true;
     genBtn.textContent = "Writing…";
+    // Locks this column's × until the write lands or fails.
+    generating.add(`${r}:${c}`);
+    remove.disabled = true;
     try {
       const { category } = await postJson("/api/rooms/" + code + "/generate", {
         hostToken,
@@ -196,13 +230,16 @@ function buildSlot(r, c) {
         theme: wanted,
       });
       draft.rounds[r].categories[c] = category;
+      generating.delete(`${r}:${c}`);
       // Replace the slot wholesale: every field in it changed.
       slot.replaceWith(buildSlot(r, c));
       toast("Wrote “" + category.title + "”. Check it before you play.", "good");
     } catch (err) {
+      generating.delete(`${r}:${c}`);
       toast(err.message);
       genBtn.disabled = false;
       genBtn.textContent = "Fill with AI";
+      remove.disabled = draft.rounds[r].categories.length <= 1;
     }
   };
 
