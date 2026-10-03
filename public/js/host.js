@@ -1,7 +1,31 @@
 import { connect, postJson, toast, fatal } from "./net.js";
 
-const CLUE_VALUES = [100, 200, 300, 400, 500];
-const NUM_CATEGORIES = 6;
+// Mirrors lib/board.js. The browser cannot import that module — it pulls in
+// zod and there is no build step — so the two copies are kept in step by hand,
+// and the smoke test asserts round 2's values over the wire.
+const ROUND_VALUES = [
+  [100, 200, 300, 400, 500],
+  [200, 400, 600, 800, 1000],
+];
+const CLUE_VALUES = ROUND_VALUES[0];
+const MAX_CATEGORIES = 6;
+const NUM_ROUNDS = ROUND_VALUES.length;
+
+const blankCategory = (title = "", round = 0) => ({
+  title,
+  clues: ROUND_VALUES[round].map((value) => ({
+    value,
+    clue: "",
+    answer: "",
+    revealed: false,
+    wager: null,
+    dailyDouble: false,
+  })),
+});
+
+const blankRound = (round) => ({
+  categories: Array.from({ length: MAX_CATEGORIES }, () => blankCategory("", round)),
+});
 
 const code = new URLSearchParams(location.search).get("code")?.toUpperCase();
 const hostToken = code ? localStorage.getItem("hostToken:" + code) : null;
@@ -81,22 +105,25 @@ function queueDraftSave() {
 function buildSetup() {
   const slots = el("slots");
   slots.textContent = "";
+  el("s-double").checked = Boolean(draft.options?.doubleRound);
 
-  for (let c = 0; c < NUM_CATEGORIES; c++) {
-    if (!draft.categories[c]) {
-      draft.categories[c] = {
-        title: "",
-        clues: CLUE_VALUES.map((value) => ({
-          value,
-          clue: "",
-          answer: "",
-          revealed: false,
-          wager: null,
-          dailyDouble: false,
-        })),
-      };
+  const rounds = draft.options?.doubleRound ? NUM_ROUNDS : 1;
+  for (let r = 0; r < rounds; r++) {
+    if (!draft.rounds[r]) draft.rounds[r] = blankRound(r);
+
+    if (rounds > 1) {
+      const head = document.createElement("h2");
+      head.className = "slots__round";
+      head.textContent = r === 0 ? "Round 1" : "Round 2 — double values";
+      slots.append(head);
     }
-    slots.append(buildSlot(c));
+
+    for (let c = 0; c < MAX_CATEGORIES; c++) {
+      if (!draft.rounds[r].categories[c]) {
+        draft.rounds[r].categories[c] = blankCategory("", r);
+      }
+      slots.append(buildSlot(r, c));
+    }
   }
   setupBuilt = true;
   // Account state decides whether the board list can be populated at all, so
@@ -104,14 +131,27 @@ function buildSetup() {
   refreshAccount();
 }
 
+el("s-double").addEventListener("change", (e) => {
+  draft.options.doubleRound = e.target.checked;
+  queueDraftSave();
+  // Round 2's slots appear or disappear; anything typed into them stays in the
+  // draft either way, so toggling off and on again loses nothing.
+  buildSetup();
+});
+
 /** Resizes a textarea to fit its content. */
 function autoGrow(box) {
   box.style.height = "auto";
   box.style.height = box.scrollHeight + 2 + "px";
 }
 
-function buildSlot(c) {
-  const cat = draft.categories[c];
+/** Two rounds mean two identical-looking grids; a screen reader needs them apart. */
+function roundLabel(r, c) {
+  return "Round " + (r + 1) + " category " + (c + 1);
+}
+
+function buildSlot(r, c) {
+  const cat = draft.rounds[r].categories[c];
 
   const slot = document.createElement("div");
   slot.className = "slot";
@@ -125,7 +165,7 @@ function buildSlot(c) {
   title.type = "text";
   title.placeholder = "Category name";
   title.value = cat.title;
-  title.setAttribute("aria-label", "Category " + (c + 1) + " name");
+  title.setAttribute("aria-label", roundLabel(r, c) + " name");
   title.addEventListener("input", () => {
     cat.title = title.value;
     queueDraftSave();
@@ -137,7 +177,7 @@ function buildSlot(c) {
   const theme = document.createElement("input");
   theme.type = "text";
   theme.placeholder = "Theme, e.g. Pokemon";
-  theme.setAttribute("aria-label", "Theme for category " + (c + 1));
+  theme.setAttribute("aria-label", "Theme for " + roundLabel(r, c).toLowerCase());
   const genBtn = document.createElement("button");
   genBtn.className = "btn";
   genBtn.textContent = "Fill with AI";
@@ -151,12 +191,13 @@ function buildSlot(c) {
     try {
       const { category } = await postJson("/api/rooms/" + code + "/generate", {
         hostToken,
+        roundIndex: r,
         categoryIndex: c,
         theme: wanted,
       });
-      draft.categories[c] = category;
+      draft.rounds[r].categories[c] = category;
       // Replace the slot wholesale: every field in it changed.
-      slot.replaceWith(buildSlot(c));
+      slot.replaceWith(buildSlot(r, c));
       toast("Wrote “" + category.title + "”. Check it before you play.", "good");
     } catch (err) {
       toast(err.message);
@@ -366,7 +407,19 @@ el("saved").addEventListener("change", async (e) => {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error ?? "Could not load that board.");
 
-    draft = { categories: body.board.categories.slice(0, NUM_CATEGORIES) };
+    // A saved board is the full wrapper. Clamp each round to the ceiling in
+    // case it was written by a wider build than this one.
+    draft = {
+      rounds: (body.board.rounds ?? []).map((round) => ({
+        categories: (round.categories ?? []).slice(0, MAX_CATEGORIES),
+      })),
+      final: body.board.final ?? null,
+      options: {
+        doubleRound: Boolean(body.board.options?.doubleRound),
+        finalRound: Boolean(body.board.options?.finalRound),
+      },
+    };
+    if (!draft.rounds.length) draft.rounds = [blankRound(0)];
     buildSetup();
     el("board-name").value = name;
     socket.send({ type: "saveDraft", draft });

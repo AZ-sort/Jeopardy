@@ -994,6 +994,40 @@ textarea {
   color: var(--coral);
 }
 
+/* ---------------------------------------------------------- setup toggles */
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--cream);
+}
+
+.toggle small {
+  display: block;
+  color: var(--cream-dim);
+}
+
+.toggle input:disabled + span {
+  opacity: 0.45;
+}
+
+.slots__round {
+  font-family: var(--display);
+  font-size: clamp(1.4rem, 3vw, 2.2rem);
+  color: var(--brass);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 26px 0 10px;
+}
+
 /* ---------------------------------------------------------- daily double */
 
 .dd-splash {
