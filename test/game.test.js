@@ -25,6 +25,11 @@ import {
   finalMaxWager,
   setFinalWager,
   allFinalWagersIn,
+  revealFinalClue,
+  submitFinalAnswer,
+  closeFinalAnswers,
+  FINAL_ANSWER_SECONDS,
+  FINAL_ANSWER_MAX,
   PHASE,
 } from "../lib/game.js";
 
@@ -856,5 +861,96 @@ test("a player sees their own bet and nobody else's", () => {
   assert.ok(
     !JSON.stringify(view.final).includes("200"),
     "another player's bet leaked into the player view",
+  );
+});
+
+/** Everyone has bet; the clue is about to go up. */
+function atFinalClue(now = 1_000_000) {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  setFinalWager(g, "p2", 200);
+  revealFinalClue(g, now);
+  return g;
+}
+
+test("the clue cannot go up until every bet is in", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  const res = revealFinalClue(g, 1_000_000);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "bets-outstanding");
+});
+
+test("showing the clue starts a thirty second clock", () => {
+  const g = atFinalClue(1_000_000);
+  assert.equal(g.phase, PHASE.FINAL_CLUE);
+  assert.equal(g.finalRound.deadline, 1_000_000 + FINAL_ANSWER_SECONDS * 1000);
+});
+
+test("players can read the clue once the clock is running", () => {
+  const g = atFinalClue();
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.clue, "The final clue");
+  assert.equal(view.final.answer, null, "the answer must never reach a phone early");
+});
+
+test("an answer submitted before the deadline is kept", () => {
+  const g = atFinalClue(1_000_000);
+  const res = submitFinalAnswer(g, "p1", "  what is a goose  ", 1_000_100);
+  assert.equal(res.ok, true);
+  assert.equal(g.finalRound.answers["p1"], "what is a goose");
+});
+
+test("an answer submitted after the deadline is refused", () => {
+  const g = atFinalClue(1_000_000);
+  const late = 1_000_000 + FINAL_ANSWER_SECONDS * 1000 + 1;
+  const res = submitFinalAnswer(g, "p1", "too slow", late);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "too-late");
+  assert.equal(g.finalRound.answers["p1"], undefined);
+});
+
+test("an answer landing on the deadline itself still counts", () => {
+  const g = atFinalClue(1_000_000);
+  const exact = 1_000_000 + FINAL_ANSWER_SECONDS * 1000;
+  assert.equal(submitFinalAnswer(g, "p1", "just in time", exact).ok, true);
+});
+
+test("a long answer is cut rather than refused", () => {
+  const g = atFinalClue();
+  submitFinalAnswer(g, "p1", "x".repeat(500), 1_000_100);
+  assert.equal(g.finalRound.answers["p1"].length, FINAL_ANSWER_MAX);
+});
+
+test("closing the window stops further answers", () => {
+  const g = atFinalClue(1_000_000);
+  closeFinalAnswers(g);
+  const res = submitFinalAnswer(g, "p2", "after the bell", 1_000_200);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "wrong-phase");
+});
+
+test("closing twice is harmless", () => {
+  const g = atFinalClue(1_000_000);
+  // The host ends it early and the timer fires afterwards anyway.
+  assert.equal(closeFinalAnswers(g).ok, true);
+  const second = closeFinalAnswers(g);
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, "wrong-phase");
+  assert.equal(g.phase, PHASE.FINAL_REVEAL, "a late timer must not undo the close");
+});
+
+test("a player sees their own answer and nobody else's", () => {
+  const g = atFinalClue();
+  submitFinalAnswer(g, "p1", "mine", 1_000_100);
+  submitFinalAnswer(g, "p2", "theirs", 1_000_100);
+
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.myAnswer, "mine");
+  assert.ok(
+    !JSON.stringify(view.final).includes("theirs"),
+    "another player's answer leaked into the player view",
   );
 });
