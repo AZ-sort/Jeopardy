@@ -1051,10 +1051,21 @@ textarea {
 
 /* ---------------------------------------------------------- round end */
 
+/*
+ * Takes the screen over the way `.clue` does. Without this it renders below a
+ * full-height `#game`, which puts "Start round 2" off the bottom of a TV — the
+ * one control that moves the game on.
+ */
 .roundend {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--stage);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 16px;
   padding: 40px 20px;
 }

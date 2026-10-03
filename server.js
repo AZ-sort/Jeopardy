@@ -618,6 +618,10 @@ function handleHostMessage(ws, room, msg) {
       if (draftLooksSane(msg.draft)) {
         room.draft = msg.draft;
         broadcast(room);
+      } else {
+        // Silently dropping it would leave the host's screen and the server
+        // holding different boards, and Start would play the older one.
+        toast(ws, "That board was not saved — it is the wrong shape or too big.");
       }
       return;
     }

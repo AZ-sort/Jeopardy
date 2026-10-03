@@ -93,6 +93,28 @@ test("a round may hold anywhere from one to six categories", () => {
   assert.equal(validateBoard(board).ok, false, "seven is past the ceiling");
 });
 
+test("a round carrying another round's values is refused", () => {
+  const board = playableBoard({ doubleRound: true });
+  // Round 2 authored by a drifted client: round 1's values on the second board.
+  board.rounds[1].categories[0].clues.forEach((clue, i) => {
+    clue.value = ROUND_VALUES[0][i];
+  });
+  const res = validateBoard(board);
+  assert.equal(res.ok, false);
+  assert.match(res.error, /should be worth \$200, not \$100/);
+});
+
+test("compacting never throws on a draft with the wrong types in it", () => {
+  // A socket can send anything; compactBoard must not be the thing that dies.
+  const hostile = {
+    rounds: [{ categories: [{ title: 1, clues: [null, 7, "x"] }] }, { categories: [] }],
+    final: null,
+    options: {},
+  };
+  assert.doesNotThrow(() => compactBoard(hostile));
+  assert.equal(compactBoard(hostile).rounds[0].categories.length, 0);
+});
+
 test("a played round with every category removed is refused", () => {
   const board = playableBoard();
   board.rounds[0].categories = [];

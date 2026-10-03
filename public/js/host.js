@@ -102,6 +102,13 @@ function queueDraftSave() {
   saveTimer = setTimeout(() => socket.send({ type: "saveDraft", draft }), 600);
 }
 
+/** Sends the draft now. Adding or removing a column within the debounce
+ *  window would otherwise start the game on the board as it was before. */
+function flushDraftSave() {
+  clearTimeout(saveTimer);
+  socket.send({ type: "saveDraft", draft });
+}
+
 function buildSetup() {
   const slots = el("slots");
   slots.textContent = "";
@@ -164,12 +171,28 @@ function roundLabel(r, c) {
 /** "round:category" for every slot with a generation in flight. */
 const generating = new Set();
 
+/** True while any column in this round is being written into. */
+function roundIsGenerating(r) {
+  for (const key of generating) if (key.startsWith(`${r}:`)) return true;
+  return false;
+}
+
+/** Re-evaluates every × after a generation starts or finishes. */
+function refreshRemoveButtons() {
+  for (const slot of document.querySelectorAll(".slot")) {
+    const r = Number(slot.dataset.round);
+    const btn = slot.querySelector(".slot__remove");
+    if (btn) btn.disabled = draft.rounds[r].categories.length <= 1 || roundIsGenerating(r);
+  }
+}
+
 function buildSlot(r, c) {
   const cat = draft.rounds[r].categories[c];
 
   const slot = document.createElement("div");
   slot.className = "slot";
   slot.dataset.cat = String(c);
+  slot.dataset.round = String(r);
 
   const n = document.createElement("span");
   n.className = "slot__n";
@@ -181,9 +204,10 @@ function buildSlot(r, c) {
   remove.textContent = "×";
   remove.title = "Remove this category";
   remove.setAttribute("aria-label", "Remove " + roundLabel(r, c).toLowerCase());
-  // Never while this column is being written into: removal renumbers
-  // everything after it, so the arriving category would land elsewhere.
-  remove.disabled = draft.rounds[r].categories.length <= 1 || generating.has(`${r}:${c}`);
+  // Locked while ANY column in this round is being written into, not just this
+  // one: removing an earlier column renumbers the generating one, and the
+  // arriving category would land on whichever category shuffled into its slot.
+  remove.disabled = draft.rounds[r].categories.length <= 1 || roundIsGenerating(r);
   remove.addEventListener("click", () => {
     draft.rounds[r].categories.splice(c, 1);
     queueDraftSave();
@@ -219,9 +243,9 @@ function buildSlot(r, c) {
     if (!wanted) return toast("Type a theme first, like “Pokemon” or “90s rap”.");
     genBtn.disabled = true;
     genBtn.textContent = "Writing…";
-    // Locks this column's × until the write lands or fails.
+    // Locks every × in this round until the write lands or fails.
     generating.add(`${r}:${c}`);
-    remove.disabled = true;
+    refreshRemoveButtons();
     try {
       const { category } = await postJson("/api/rooms/" + code + "/generate", {
         hostToken,
@@ -233,13 +257,15 @@ function buildSlot(r, c) {
       generating.delete(`${r}:${c}`);
       // Replace the slot wholesale: every field in it changed.
       slot.replaceWith(buildSlot(r, c));
+      // The other columns in this round were locked while it ran.
+      refreshRemoveButtons();
       toast("Wrote “" + category.title + "”. Check it before you play.", "good");
     } catch (err) {
       generating.delete(`${r}:${c}`);
       toast(err.message);
       genBtn.disabled = false;
       genBtn.textContent = "Fill with AI";
-      remove.disabled = draft.rounds[r].categories.length <= 1;
+      refreshRemoveButtons();
     }
   };
 
@@ -294,7 +320,10 @@ function buildSlot(r, c) {
   return slot;
 }
 
-el("start").addEventListener("click", () => socket.send({ type: "startGame" }));
+el("start").addEventListener("click", () => {
+  flushDraftSave();
+  socket.send({ type: "startGame" });
+});
 
 /**
  * Saved boards belong to an account, so they follow you to any device.
@@ -447,7 +476,10 @@ el("saved").addEventListener("change", async (e) => {
     // A saved board is the full wrapper. Clamp each round to the ceiling in
     // case it was written by a wider build than this one.
     draft = {
-      rounds: (body.board.rounds ?? []).map((round) => ({
+      // Both dimensions are clamped. An over-wide board the server would
+      // silently reject leaves the screen and the server disagreeing about
+      // what is loaded, and Start then plays the older board with no error.
+      rounds: (body.board.rounds ?? []).slice(0, NUM_ROUNDS).map((round) => ({
         categories: (round.categories ?? []).slice(0, MAX_CATEGORIES),
       })),
       final: body.board.final ?? null,
