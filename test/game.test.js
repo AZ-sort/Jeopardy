@@ -707,3 +707,19 @@ test("the player view says which round is being played", () => {
   assert.equal(view.round, 1);
   assert.equal(view.rounds, 2);
 });
+
+// ---------------------------------------------------------------- per-player views
+
+test("a player payload is built for one named player", () => {
+  const g = twoPlayerGame();
+  const forAnn = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(forAnn.you, "p1");
+
+  const forBo = publicState(g, { forHost: false, playerId: "p2" });
+  assert.equal(forBo.you, "p2");
+});
+
+test("the host payload has no player identity", () => {
+  const g = twoPlayerGame();
+  assert.equal(publicState(g, { forHost: true }).you, null);
+});

@@ -194,9 +194,15 @@ function broadcast(room) {
   for (const ws of room.hosts) {
     send(ws, { type: "state", state: hostState, draft: room.draft });
   }
-  const playerState = G.publicState(room.game, { forHost: false });
+  // One payload per player, not one shared payload: in Final Jeopardy each
+  // phone must see its own bet and answer and nobody else's, so the states
+  // genuinely differ. Capped at MAX_PLAYERS (12), so this stays cheap.
   for (const [playerId, ws] of room.players) {
-    send(ws, { type: "state", state: playerState, you: playerId });
+    send(ws, {
+      type: "state",
+      state: G.publicState(room.game, { forHost: false, playerId }),
+      you: playerId,
+    });
   }
 }
 
