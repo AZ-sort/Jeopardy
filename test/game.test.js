@@ -21,6 +21,10 @@ import {
   setWager,
   maxWager,
   startNextRound,
+  startFinal,
+  finalMaxWager,
+  setFinalWager,
+  allFinalWagersIn,
   PHASE,
 } from "../lib/game.js";
 
@@ -722,4 +726,135 @@ test("a player payload is built for one named player", () => {
 test("the host payload has no player identity", () => {
   const g = twoPlayerGame();
   assert.equal(publicState(g, { forHost: true }).you, null);
+});
+
+// ---------------------------------------------------------------- final jeopardy
+
+/** A board with a Final Jeopardy clue and the toggle on. */
+function finalBoard(options = {}) {
+  return {
+    rounds: [testBoard()],
+    final: { category: "Last Things", clue: "The final clue", answer: "The final answer" },
+    options: { doubleRound: false, finalRound: true, ...options },
+  };
+}
+
+/** A finished one-round game sitting at the round end, final still to come. */
+function atFinal() {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  addPlayer(g, { id: "p2", name: "Bo" });
+  setBoard(g, finalBoard());
+  startGame(g, { random: LAST_CLUE });
+  adjustScore(g, "p1", 1000);
+  adjustScore(g, "p2", 400);
+  playWholeBoard(g);
+  return g;
+}
+
+test("a board with final jeopardy on pauses at the round end instead of ending", () => {
+  const g = atFinal();
+  assert.equal(g.phase, PHASE.ROUND_END);
+});
+
+test("a board with final jeopardy off still ends the game outright", () => {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  setBoard(g, { ...finalBoard(), options: { doubleRound: false, finalRound: false } });
+  startGame(g, { random: LAST_CLUE });
+  playWholeBoard(g);
+  assert.equal(g.phase, PHASE.DONE);
+});
+
+test("starting final jeopardy opens the betting", () => {
+  const g = atFinal();
+  const res = startFinal(g);
+  assert.equal(res.ok, true);
+  assert.equal(g.phase, PHASE.FINAL_WAGER);
+});
+
+test("a player bets anywhere from nothing to their whole score", () => {
+  const g = atFinal();
+  startFinal(g);
+  assert.equal(finalMaxWager(g, "p1"), 1000);
+  assert.equal(setFinalWager(g, "p1", 0).ok, true);
+  assert.equal(setFinalWager(g, "p1", 1000).ok, true);
+});
+
+test("a bet above the player's own score is refused", () => {
+  const g = atFinal();
+  startFinal(g);
+  const res = setFinalWager(g, "p2", 500);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "out-of-range");
+});
+
+test("a bet that is not a whole hundred is refused", () => {
+  const g = atFinal();
+  startFinal(g);
+  assert.equal(setFinalWager(g, "p1", 250).reason, "bad-increment");
+});
+
+test("a player on nothing is in the round at a forced zero", () => {
+  const g = atFinal();
+  adjustScore(g, "p2", -400); // Bo is on zero.
+  startFinal(g);
+
+  assert.equal(finalMaxWager(g, "p2"), 0);
+  // Set for them, so the room is not waiting on a bet they cannot place.
+  assert.equal(g.finalRound.wagers["p2"], 0);
+  assert.equal(setFinalWager(g, "p2", 100).reason, "out-of-range");
+});
+
+test("a player in the red is also forced to zero rather than excluded", () => {
+  const g = atFinal();
+  adjustScore(g, "p2", -900); // Bo is on -500.
+  startFinal(g);
+  assert.equal(finalMaxWager(g, "p2"), 0);
+  assert.equal(g.finalRound.wagers["p2"], 0);
+});
+
+test("the betting is done once everyone who can bet has", () => {
+  const g = atFinal();
+  startFinal(g);
+  assert.equal(allFinalWagersIn(g), false);
+  setFinalWager(g, "p1", 300);
+  assert.equal(allFinalWagersIn(g), false);
+  setFinalWager(g, "p2", 200);
+  assert.equal(allFinalWagersIn(g), true);
+});
+
+test("someone who joins after the betting started does not hold up the room", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  setFinalWager(g, "p2", 200);
+
+  addPlayer(g, { id: "p3", name: "Cal" });
+  assert.equal(allFinalWagersIn(g), true, "a latecomer must not block the round");
+  assert.equal(setFinalWager(g, "p3", 100).reason, "not-playing-final");
+});
+
+test("the final clue is withheld from players until every bet is in", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.clue, null, "a player could bet knowing the clue");
+  assert.equal(publicState(g, { forHost: true }).final.clue, "The final clue");
+});
+
+test("a player sees their own bet and nobody else's", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  setFinalWager(g, "p2", 200);
+
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.myWager, 300);
+  assert.ok(
+    !JSON.stringify(view.final).includes("200"),
+    "another player's bet leaked into the player view",
+  );
 });
