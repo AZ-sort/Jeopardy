@@ -39,24 +39,22 @@ Postgres. It becomes:
 `options.doubleRound` is on, and carries values 200–1000. `final` is populated
 only when `options.finalRound` is on.
 
-### Upgrading what is already saved
+### No migration, deliberately
 
-Boards live in a JSONB column (`boards.data`, `lib/db.js`), so there is **no SQL
-migration**. But every board already saved is the bare old shape, and so is
-every board someone pasted in or exported. One function handles it:
+Boards live in a JSONB column (`boards.data`, `lib/db.js`), so the shape change
+needs no SQL migration.
 
-```js
-upgradeBoard(input) // {categories} -> {rounds:[{categories}], final:null, options:{off,off}}
-```
+An earlier draft of this spec carried an `upgradeBoard` function to convert
+old `{categories}` boards on read. **It is cut.** There are no saved boards in
+the database, and no other route an old-shape board could arrive by — the
+host UI has no paste-JSON or import path, despite the comment in `lib/board.js`
+suggesting otherwise. Writing a conversion for zero inputs is cost with no
+cover.
 
-It runs on every board read — from Postgres, from the saved-board API, and on
-a draft restored into a room. A board already in the new shape passes through
-untouched.
-
-This is the riskiest single piece of the change: get it wrong and the host's
-saved boards stop loading. It gets its own tests, including a real round-trip
-through the Postgres-backed `db` test suite, and the rule is that an old board
-must still play start to finish with both toggles off.
+`validateBoard` rejects a board that has no `rounds` array with a clear error
+rather than silently mangling it, which is the cheap half of the protection
+without the dead code. If an import path is ever added, this decision gets
+revisited then.
 
 ## Authoring
 
@@ -121,23 +119,63 @@ Every player gets the pad. The range is **$0 up to their own score**, in
 hundreds. A player at or below zero sees a locked $0 — they are still in the
 round, they simply cannot bet anything.
 
-Note this deliberately differs from a Daily Double, which has a floor of $100
-and a ceiling of `max(score, board high)`. Final Jeopardy is the classic rule:
-you can bet nothing, and you can never bet more than you hold.
+This deliberately differs from a Daily Double, and the reason is worth keeping
+written down because the two rules sit side by side and look like an
+inconsistency:
+
+- A **Daily Double** has a floor of $100 and a ceiling of `max(score, board
+  high)`. It happens mid-game, so betting more than you hold is a real gamble
+  — you can go negative and play your way back.
+- **Final Jeopardy** is the last bet of the night. There is no playing back
+  from it. So you can never stake more than you hold, and a player at or below
+  zero cannot move their score at all.
+
+That gives an invariant worth asserting directly: **Final Jeopardy can never
+take a player below $0.** Worst case they bet everything and land exactly on
+zero.
 
 **The clue is withheld from every phone until the last bet is in.** Same rule
 as a Daily Double and the same reason.
 
-### 2. `FINAL_CLUE`
+### 2. `FINAL_CLUE` — and the one timer in the game
 
-The clue appears. Every player types an answer on their phone and submits it.
-This is the first text players have ever sent — until now phones could only
-buzz and wager — so the input is length-capped and trimmed server-side like
-every other player-supplied string.
+The clue appears and a **30-second countdown** starts. Every player types an
+answer on their phone and submits it. This is the first text players have ever
+sent — until now phones could only buzz and wager — so the input is
+length-capped and trimmed server-side like every other player-supplied string.
 
-A player who submits nothing is treated as having answered blank. The host can
-move on without waiting for everyone; stragglers are not allowed to hold up
-the room.
+When the clock runs out the input locks. **Anything not submitted is not an
+answer** — that player simply has none, and is revealed with a blank. No
+grace period, because the whole point of a deadline everyone can see is that
+it is the same for everyone.
+
+The host can also end it early with **Everyone's in**, and the timer never
+starts the reveal by itself — it only closes the window. Pacing stays with the
+host, like every other transition in this game.
+
+#### Keeping `lib/game.js` pure
+
+A countdown is the first thing in this app that depends on the passage of
+time, and `lib/game.js` is pure on purpose. The split:
+
+- **The rules hold a deadline, not a timer.** `game.final.deadline` is an
+  absolute epoch milliseconds value. `closeFinalAnswers(game, now)` takes the
+  current time as an argument and is a plain function like everything else, so
+  it is tested by passing a number rather than by waiting.
+- **The server owns the `setTimeout`**, alongside the existing per-room
+  housekeeping interval, and calls that pure function when it fires. The
+  timeout is cleared if the host ends the window early.
+- **Clients render from the deadline**, not from a local count. The state
+  payload carries `deadline` and the server's `now`, so each phone computes
+  its own offset once and counts down against it. A phone with a skewed clock
+  still sees the right number, and a phone that reconnects mid-round picks the
+  countdown up where it actually is rather than restarting at 30.
+
+The duration is a single exported constant, `FINAL_ANSWER_SECONDS = 30`, so
+changing it after a game night is a one-line edit.
+
+This is the only timer in the game. Timing the main rounds' buzzing remains
+out of scope.
 
 ### 3. `FINAL_REVEAL`
 
@@ -153,11 +191,12 @@ last player is ruled on, the phase becomes `DONE`.
 
 ```js
 game.final = {
-  wagers:  { [playerId]: number },
-  answers: { [playerId]: string },
-  order:   [playerId],   // poorest first, fixed when FINAL_REVEAL begins
+  wagers:   { [playerId]: number },
+  answers:  { [playerId]: string },   // absent = never submitted
+  deadline: number | null,            // epoch ms; the server owns the timeout
+  order:    [playerId],               // poorest first, fixed when FINAL_REVEAL begins
   revealIndex: number,
-  judged:  { [playerId]: boolean },
+  judged:   { [playerId]: boolean },
 }
 ```
 
@@ -183,15 +222,23 @@ view never includes clue answers".
 
 `lib/game.js` stays pure, so the rules go in `test/game.test.js` as usual:
 round transition and its gating on the toggles, two non-overlapping Daily
-Doubles in round 2, the $0-to-score wager range, blank answers, reveal order by
-score, and scoring by each player's own bet.
+Doubles in round 2, the $0-to-score wager range, reveal order by score, and
+scoring by each player's own bet.
 
-`upgradeBoard` gets its own tests plus a Postgres round-trip in
-`test/db.test.js`.
+Two invariants get asserted directly rather than inferred:
+
+- Final Jeopardy never takes a player below $0, including the player who bets
+  everything and gets it wrong.
+- An unsubmitted answer is revealed as blank and scores nothing either way.
+
+The timer is tested by passing times into `closeFinalAnswers(game, now)` — one
+test a millisecond before the deadline, one after — so the suite never waits
+on a clock.
 
 The smoke test gains a full two-round game with a Final Jeopardy finish, driven
 over real sockets, asserting the secrecy table above from a player socket
-rather than from the game object.
+rather than from the game object, and confirming that an answer submitted after
+the deadline is refused by the server rather than merely blocked in the UI.
 
 Browser play-through on the Railway deployment before either PR is called done,
 per `CLAUDE.md`.
@@ -211,4 +258,8 @@ either can be backed out without the other.
 
 ## Not in scope
 
-Timers, sound, a third round, and per-round category counts other than six.
+Sound, a third round, per-round category counts other than six, and any timer
+outside Final Jeopardy's answer window — the main rounds stay untimed, with
+the host opening the buzzers when they have finished reading.
+
+Converting old-shape saved boards, for the reason given above.
