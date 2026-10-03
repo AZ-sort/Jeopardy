@@ -85,9 +85,27 @@ Same as the other projects in this vault:
   Static and local checks have missed real breakage on sibling projects;
   production is play-tested by hand after a change ships.
 
+## The Daily Double
+
+One per board, placed at random by `startGame` — which takes an injectable
+`random` so tests can pin it to a known square. Opening it enters `PHASE.WAGER`:
+the host names who found it, that player bets from their phone in hundreds, and
+locking the bet sets `buzzedPlayer` so the ordinary `judge()` path scores it via
+`clue.wager ?? clue.value`. The only special case is that a wrong answer closes
+the clue instead of re-arming the buzzers.
+
+Two things here are load-bearing and easy to undo by accident:
+
+- **The clue text is withheld from players during `PHASE.WAGER`.** Betting with
+  the question visible is not a Daily Double.
+- **The board payload never carries `dailyDouble`.** It is host-only until the
+  square is opened, or a player could read its location off the socket.
+
+The wager ceiling comes from the board's own highest value, not a hardcoded
+500, so a second 200–1000 board will work without touching it.
+
 ## Not built yet
 
-Daily Doubles and wagering, Final Jeopardy, a Double Jeopardy round, timers,
-sound. The `wager` field already exists on every clue and the scoring path
-already honours `clue.wager ?? clue.value` (`lib/game.js`), so Daily Doubles
-need a host UI and no data migration.
+Final Jeopardy, a Double Jeopardy round, timers, sound. A planned option at
+host-setup time chooses one board or two — the classic pair being 100–500
+followed by 200–1000.

@@ -103,6 +103,21 @@ game. Reading them through takes a minute and is worth it.
 Host keyboard shortcuts, since you will be looking at the room and not the
 screen: `Space` opens the buzzers, `Y` correct, `N` wrong, `Esc` back to board.
 
+### The Daily Double
+
+One square on every board is the Daily Double, hidden at random when you start
+the game — you will not know where it is either, which is the point.
+
+Open it and the board says **DAILY DOUBLE** instead of showing the clue. Tap
+whoever picked the square and the bet lands on *their* phone: two big buttons,
+hundreds only, anywhere from $100 up to their own score or the biggest value on
+the board, whichever is more. Someone on nothing can still swing $500.
+
+Nobody else can buzz. The clue stays off every phone until the bet is locked,
+so nobody is betting with the question in front of them. Then you read it, and
+Correct or Wrong moves their score by the bet rather than the square's value. A
+miss ends the clue — it was never open to the room.
+
 ### If you are casting to a TV
 
 The clue screen deliberately never shows the answer — the **Peek at answer**
@@ -243,9 +258,9 @@ OpenRouter, covering the request shape and every failure branch without a key.
 - **Remote play needs a tunnel.** The LAN address only works on your wifi. For
   friends elsewhere, expose the port with something like
   `cloudflared tunnel --url http://localhost:3000` and share that address.
-- **Not yet built:** Daily Doubles and wagering, Final Jeopardy, a Double
-  Jeopardy round, timers, sound. The `wager` field already exists on every clue
-  so Daily Doubles will not need a data migration.
+- **Not yet built:** Final Jeopardy, a Double Jeopardy round, timers, sound.
+- **One Daily Double per board.** The real show has two in the second round;
+  that arrives with the second board.
 - **Fonts come from Google Fonts.** Playing fully offline falls back to system
   faces, which looks plainer but works.
 - **Schema compliance varies by model.** OpenRouter routes a model through

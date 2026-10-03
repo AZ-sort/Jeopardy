@@ -17,6 +17,9 @@ import {
   renamePlayer,
   publicState,
   isBoardComplete,
+  assignDailyDouble,
+  setWager,
+  maxWager,
   PHASE,
 } from "../lib/game.js";
 
@@ -30,17 +33,31 @@ function testBoard() {
       answer: `${title} answer for $${value}`,
       revealed: false,
       wager: null,
+      dailyDouble: false,
     })),
   });
   return { categories: [cat("Alpha"), cat("Beta")] };
 }
 
-function twoPlayerGame() {
+/** Puts the Daily Double on the very last clue, out of the way of other tests. */
+const LAST_CLUE = () => 0.999;
+/** Puts the Daily Double on the very first clue, Alpha $100. */
+const FIRST_CLUE = () => 0;
+
+function twoPlayerGame(random = LAST_CLUE) {
   const g = createGame("ABCD");
   addPlayer(g, { id: "p1", name: "Ann" });
   addPlayer(g, { id: "p2", name: "Bo" });
   setBoard(g, testBoard());
-  startGame(g);
+  startGame(g, { random });
+  return g;
+}
+
+/** A game whose Daily Double is Alpha $100, already open and assigned to Ann. */
+function dailyDoubleGame() {
+  const g = twoPlayerGame(FIRST_CLUE);
+  openClue(g, 0, 0);
+  assignDailyDouble(g, "p1");
   return g;
 }
 
@@ -405,4 +422,180 @@ test("the host view includes answers for unrevealed clues", () => {
 
   const view = publicState(g, { forHost: true });
   assert.equal(view.activeClue.answer, "Alpha answer for $100");
+});
+
+// ---------------------------------------------------------------- daily double
+
+function allClues(game) {
+  return game.board.categories.flatMap((cat) => cat.clues);
+}
+
+test("starting a game puts exactly one daily double on the board", () => {
+  const g = twoPlayerGame();
+  const marked = allClues(g).filter((c) => c.dailyDouble);
+  assert.equal(marked.length, 1);
+});
+
+test("the daily double lands on the clue the injected random picks", () => {
+  const g = twoPlayerGame(FIRST_CLUE);
+  assert.equal(g.board.categories[0].clues[0].dailyDouble, true);
+
+  const other = twoPlayerGame(LAST_CLUE);
+  assert.equal(other.board.categories[1].clues[4].dailyDouble, true);
+});
+
+test("opening the daily double goes to the wager phase, not the clue phase", () => {
+  const g = twoPlayerGame(FIRST_CLUE);
+  openClue(g, 0, 0);
+  assert.equal(g.phase, PHASE.WAGER);
+  assert.equal(g.buzzersArmed, false);
+});
+
+test("opening an ordinary clue still goes straight to the clue phase", () => {
+  const g = twoPlayerGame(FIRST_CLUE);
+  openClue(g, 0, 1);
+  assert.equal(g.phase, PHASE.CLUE);
+});
+
+test("the board sent to players never reveals where the daily double is", () => {
+  const g = twoPlayerGame(FIRST_CLUE);
+  const view = publicState(g, { forHost: false });
+  assert.ok(
+    !JSON.stringify(view.board).includes("dailyDouble"),
+    "the daily double location leaked into the player board",
+  );
+});
+
+test("the clue text is withheld from players while the wager is open", () => {
+  const g = dailyDoubleGame();
+
+  const view = publicState(g, { forHost: false });
+  assert.equal(view.activeClue.dailyDouble, true);
+  assert.equal(
+    view.activeClue.clue,
+    null,
+    "players could bet with the clue in front of them",
+  );
+});
+
+test("the host can read the daily double clue while the wager is open", () => {
+  const g = dailyDoubleGame();
+  const view = publicState(g, { forHost: true });
+  assert.equal(view.activeClue.clue, "Alpha clue for $100");
+});
+
+test("nobody can buzz while a wager is being set", () => {
+  const g = dailyDoubleGame();
+  const res = buzz(g, "p2");
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "wrong-phase");
+});
+
+test("arming the buzzers during a wager is refused", () => {
+  const g = dailyDoubleGame();
+  assert.equal(armBuzzers(g).ok, false);
+});
+
+test("the host cannot hand the daily double to someone who is not playing", () => {
+  const g = twoPlayerGame(FIRST_CLUE);
+  openClue(g, 0, 0);
+  const res = assignDailyDouble(g, "nobody");
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "unknown-player");
+});
+
+test("a wager from anyone but the assigned player is refused", () => {
+  const g = dailyDoubleGame();
+  const res = setWager(g, "p2", 300);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "not-your-wager");
+});
+
+test("a wager before the host has assigned the clue is refused", () => {
+  const g = twoPlayerGame(FIRST_CLUE);
+  openClue(g, 0, 0);
+  const res = setWager(g, "p1", 300);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "no-wager-player");
+});
+
+test("a wager that is not a multiple of 100 is refused", () => {
+  const g = dailyDoubleGame();
+  const res = setWager(g, "p1", 46);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "bad-increment");
+});
+
+test("a wager of zero or less is refused", () => {
+  const g = dailyDoubleGame();
+  assert.equal(setWager(g, "p1", 0).reason, "out-of-range");
+  assert.equal(setWager(g, "p1", -200).reason, "out-of-range");
+});
+
+test("a wager above the player's ceiling is refused", () => {
+  const g = dailyDoubleGame();
+  const res = setWager(g, "p1", 600);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "out-of-range");
+});
+
+test("a broke player can still bet up to the biggest value on the board", () => {
+  const g = dailyDoubleGame();
+  adjustScore(g, "p1", -5000);
+  assert.equal(maxWager(g, "p1"), 500);
+  assert.equal(setWager(g, "p1", 500).ok, true);
+});
+
+test("a player ahead of the board bets up to their own score", () => {
+  const g = dailyDoubleGame();
+  adjustScore(g, "p1", 1800);
+  assert.equal(maxWager(g, "p1"), 1800);
+  assert.equal(setWager(g, "p1", 1800).ok, true);
+});
+
+test("locking the wager hands the clue to that player with no buzzing", () => {
+  const g = dailyDoubleGame();
+  const res = setWager(g, "p1", 300);
+
+  assert.equal(res.ok, true);
+  assert.equal(g.phase, PHASE.BUZZED);
+  assert.equal(g.buzzedPlayer, "p1");
+  assert.equal(g.buzzersArmed, false);
+});
+
+test("players can read the clue once the wager is locked in", () => {
+  const g = dailyDoubleGame();
+  setWager(g, "p1", 300);
+
+  const view = publicState(g, { forHost: false });
+  assert.equal(view.activeClue.clue, "Alpha clue for $100");
+  assert.equal(view.activeClue.value, 300, "the wager replaces the clue value");
+});
+
+test("a correct daily double pays the wager, not the clue value", () => {
+  const g = dailyDoubleGame();
+  setWager(g, "p1", 300);
+  judge(g, true);
+
+  assert.equal(g.players.find((p) => p.id === "p1").score, 300);
+  assert.equal(g.phase, PHASE.BOARD);
+});
+
+test("a wrong daily double deducts the wager and gives nobody else a shot", () => {
+  const g = dailyDoubleGame();
+  setWager(g, "p1", 300);
+  judge(g, false);
+
+  assert.equal(g.players.find((p) => p.id === "p1").score, -300);
+  assert.equal(g.phase, PHASE.BOARD, "the clue must close, not reopen to the room");
+  assert.equal(g.activeClue, null);
+  assert.equal(g.buzzersArmed, false);
+  assert.equal(g.board.categories[0].clues[0].revealed, true);
+});
+
+test("closing a daily double clears the wagering player", () => {
+  const g = dailyDoubleGame();
+  setWager(g, "p1", 300);
+  judge(g, true);
+  assert.equal(g.wagerPlayer, null);
 });

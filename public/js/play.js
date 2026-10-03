@@ -21,6 +21,10 @@ let myId = null;
 let state = null;
 /** Set while a buzz is in flight, so one press cannot send twice. */
 let buzzSent = false;
+/** The bet showing on the pad, in whole hundreds. Null until the pad opens. */
+let wagerAmount = null;
+/** Set while a bet is in flight, so a double tap cannot send twice. */
+let wagerSent = false;
 
 // ------------------------------------------------------------------ joining
 
@@ -75,6 +79,12 @@ function join(code, name) {
         buzzSent = false;
         toast(msg.message);
         render();
+        return;
+      }
+      if (msg.type === "wager-rejected") {
+        wagerSent = false;
+        toast(msg.message);
+        render();
       }
     },
   });
@@ -109,6 +119,37 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ------------------------------------------------------------------ wagering
+
+const wagerPad = el("p-wager");
+
+/** Bets move in whole hundreds, so the pad is two buttons rather than a keypad. */
+function stepWager(by) {
+  const step = state?.wagerStep ?? 100;
+  const max = state?.wagerMax ?? step;
+  wagerAmount = Math.min(Math.max((wagerAmount ?? step) + by * step, step), max);
+  renderWager();
+}
+
+function sendWager() {
+  if (wagerSent || wagerAmount == null) return;
+  wagerSent = true;
+  socket.send({ type: "setWager", amount: wagerAmount });
+}
+
+el("p-wager-down").addEventListener("click", () => stepWager(-1));
+el("p-wager-up").addEventListener("click", () => stepWager(1));
+el("p-wager-go").addEventListener("click", sendWager);
+
+function renderWager() {
+  const step = state?.wagerStep ?? 100;
+  const max = state?.wagerMax ?? step;
+  el("p-wager-amount").textContent = "$" + (wagerAmount ?? step);
+  el("p-wager-limit").textContent = `Anything from $${step} to $${max}, in hundreds.`;
+  el("p-wager-down").disabled = (wagerAmount ?? step) <= step;
+  el("p-wager-up").disabled = (wagerAmount ?? step) >= max;
+}
+
 // ------------------------------------------------------------------ rendering
 
 let wasArmed = false;
@@ -132,8 +173,23 @@ function render() {
   const someoneElse = state.buzzedPlayer && !iBuzzed;
   const live = state.buzzersArmed && !state.buzzedPlayer && !lockedOut;
 
+  const wagering = state.phase === "wager";
+  const myWager = wagering && state.wagerPlayer === myId;
+
   // One buzz claim per clue: clear the latch when the window reopens.
   if (!state.buzzedPlayer) buzzSent = false;
+
+  // The pad replaces the buzzer entirely — a Daily Double is nobody else's to
+  // grab, so leaving a live-looking buzzer on screen would only mislead.
+  wagerPad.hidden = !myWager;
+  buzzer.hidden = myWager;
+  if (!wagering) {
+    wagerAmount = null;
+    wagerSent = false;
+  } else if (myWager) {
+    if (wagerAmount == null) wagerAmount = state.wagerStep ?? 100;
+    renderWager();
+  }
 
   page.classList.toggle("play--armed", live);
   page.classList.toggle("play--mine", iBuzzed);
@@ -149,7 +205,9 @@ function render() {
     cat.textContent = clue.category;
     meta.append(cat, document.createTextNode(" · $" + clue.value));
 
-    clueText.textContent = clue.clue;
+    // Null while a Daily Double is being bet on — the clue is host-only until
+    // the wager is locked, so there is deliberately nothing to show yet.
+    clueText.textContent = clue.clue ?? "";
     if (state.answerRevealed && clue.answer) {
       const ans = document.createElement("em");
       ans.textContent = clue.answer;
@@ -179,8 +237,18 @@ function render() {
   }
 
   // Say what the buzzer state means, since the colour alone is not enough.
-  if (iBuzzed) {
-    meta.textContent = "You buzzed first. Answer out loud.";
+  if (myWager) {
+    meta.textContent = "Daily Double — it's yours. How much are you betting?";
+  } else if (wagering) {
+    const finder = state.players.find((p) => p.id === state.wagerPlayer);
+    meta.textContent = finder
+      ? `Daily Double — ${finder.name} is betting.`
+      : "Daily Double — the host is picking who found it.";
+  } else if (iBuzzed) {
+    // Nobody buzzed for a Daily Double, so saying they did reads as a bug.
+    meta.textContent = clue?.dailyDouble
+      ? "Your Daily Double. Answer out loud."
+      : "You buzzed first. Answer out loud.";
   } else if (someoneElse) {
     const other = state.players.find((p) => p.id === state.buzzedPlayer);
     meta.textContent = (other?.name ?? "Someone") + " got in first.";

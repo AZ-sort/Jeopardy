@@ -57,6 +57,22 @@
       <div class="play__main">
         <p class="play__meta" id="p-meta"></p>
         <button class="buzzer" id="buzz" disabled>Wait</button>
+
+        <div class="wager" id="p-wager" hidden>
+          <p class="wager__title">Daily Double</p>
+          <div class="wager__row">
+            <button class="wager__step" id="p-wager-down" type="button" aria-label="Bet less">
+              −
+            </button>
+            <output class="wager__amount" id="p-wager-amount">$100</output>
+            <button class="wager__step" id="p-wager-up" type="button" aria-label="Bet more">
+              +
+            </button>
+          </div>
+          <p class="wager__limit" id="p-wager-limit"></p>
+          <button class="btn btn--go" id="p-wager-go">Lock it in</button>
+        </div>
+
         <p class="play__clue" id="p-clue"></p>
       </div>
     </div>

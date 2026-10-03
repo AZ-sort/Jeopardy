@@ -520,6 +520,7 @@ function handleHello(ws, msg) {
 }
 
 function handlePlayerMessage(ws, room, msg) {
+  if (msg.type === "setWager") return handleWager(ws, room, msg);
   if (msg.type !== "buzz") return;
 
   const result = G.buzz(room.game, ws.meta.playerId, Date.now());
@@ -534,6 +535,27 @@ function handlePlayerMessage(ws, room, msg) {
       type: "buzz-rejected",
       reason: result.reason,
       message: reasons[result.reason] ?? "Buzz not accepted.",
+    });
+  }
+  broadcast(room);
+}
+
+/** A Daily Double bet, sent by the one player the host put on the clue. */
+function handleWager(ws, room, msg) {
+  const result = G.setWager(room.game, ws.meta.playerId, Number(msg.amount));
+  if (!result.ok) {
+    const reasons = {
+      "not-your-wager": "This one is not yours to bet on.",
+      "no-wager-player": "Wait for the host.",
+      "bad-increment": "Bets go in steps of $100.",
+      "bad-amount": "That is not a number.",
+      "out-of-range": "That is more than you are allowed to bet.",
+      "wrong-phase": "Nothing to bet on right now.",
+    };
+    return send(ws, {
+      type: "wager-rejected",
+      reason: result.reason,
+      message: reasons[result.reason] ?? "Bet not accepted.",
     });
   }
   broadcast(room);
@@ -563,6 +585,13 @@ function handleHostMessage(ws, room, msg) {
     }
     case "openClue":
       result = G.openClue(game, Number(msg.c), Number(msg.q));
+      break;
+    case "assignDailyDouble":
+      result = G.assignDailyDouble(game, String(msg.playerId));
+      break;
+    case "setWager":
+      // The host can enter the bet too, for a player whose phone has died.
+      result = G.setWager(game, game.wagerPlayer, Number(msg.amount));
       break;
     case "armBuzzers":
       result = G.armBuzzers(game);
@@ -596,6 +625,10 @@ function handleHostMessage(ws, room, msg) {
       "already-revealed": "That clue has already been played.",
       "everyone-locked-out": "Everyone has already missed this one.",
       "wrong-phase": "Cannot do that right now.",
+      "unknown-player": "That player is not in this game.",
+      "no-wager-player": "Pick who found the Daily Double first.",
+      "bad-increment": "Bets go in steps of $100.",
+      "out-of-range": "That is outside what they are allowed to bet.",
     };
     return toast(ws, reasons[result.reason] ?? "Rejected: " + result.reason);
   }

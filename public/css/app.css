@@ -993,3 +993,88 @@ textarea {
 .setup__account .danger {
   color: var(--coral);
 }
+
+/* ---------------------------------------------------------- daily double */
+
+.dd-splash {
+  font-family: var(--display);
+  font-size: clamp(2rem, 7vw, 5rem);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--brass);
+  text-shadow: 0 3px 0 var(--brass-dim);
+  margin: 0 0 0.3em;
+}
+
+.dd-pick__ask {
+  font-family: var(--display);
+  font-size: clamp(1.2rem, 3vw, 2rem);
+  color: var(--cream);
+  margin: 0 0 0.5em;
+}
+
+.dd-pick__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.dd-wait {
+  font-size: 1.1rem;
+  color: var(--cream-dim);
+}
+
+/* The phone's bet pad. Two big targets beat a number keypad in a dark room. */
+.wager {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+
+.wager__title {
+  font-family: var(--display);
+  font-size: clamp(1.8rem, 9vw, 3rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--brass);
+  margin: 0;
+}
+
+.wager__row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.wager__step {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: none;
+  background: var(--panel-lit);
+  color: var(--cream);
+  font-size: 2.2rem;
+  line-height: 1;
+  box-shadow: var(--bevel);
+}
+
+.wager__step:disabled {
+  opacity: 0.35;
+}
+
+.wager__amount {
+  font-family: var(--display);
+  font-size: clamp(2.5rem, 14vw, 4.5rem);
+  color: var(--cream);
+  min-width: 4ch;
+  text-align: center;
+}
+
+.wager__limit {
+  color: var(--cream-dim);
+  font-size: 0.95rem;
+  margin: 0;
+  text-align: center;
+}

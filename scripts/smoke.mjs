@@ -26,7 +26,14 @@ function check(label, condition, detail) {
 function client(onReady) {
   return new Promise((resolve) => {
     const ws = new WebSocket("ws://localhost:" + PORT + "/ws");
-    const api = { ws, state: null, rejected: [], toasts: [], fatal: null };
+    const api = {
+      ws,
+      state: null,
+      rejected: [],
+      wagerRejected: [],
+      toasts: [],
+      fatal: null,
+    };
     ws.on("open", () => ws.send(JSON.stringify(onReady())));
     ws.on("message", (raw) => {
       const m = JSON.parse(String(raw));
@@ -36,6 +43,7 @@ function client(onReady) {
       }
       if (m.type === "state") api.state = m.state;
       if (m.type === "buzz-rejected") api.rejected.push(m.reason);
+      if (m.type === "wager-rejected") api.wagerRejected.push(m.reason);
       if (m.type === "toast") api.toasts.push(m.message);
       if (m.type === "fatal") api.fatal = m.message;
     });
@@ -52,6 +60,7 @@ function makeBoard() {
       answer: title + " answer " + value,
       revealed: false,
       wager: null,
+      dailyDouble: false,
     })),
   });
   return { categories: [cat("Alpha"), cat("Beta")] };
@@ -151,19 +160,43 @@ await wait(200);
 check("game started", host.state.phase === "board", host.state.phase);
 check("board has 2 categories", host.state.board?.categories.length === 2);
 
+/**
+ * The Daily Double is hidden at random, so no square is guaranteed ordinary.
+ * Opens cells until one is a normal clue, playing out any Daily Double it
+ * uncovers on the way, and reports which cell it settled on.
+ */
+async function openOrdinaryClue(cells) {
+  for (const [c, q] of cells) {
+    host.send({ type: "openClue", c, q });
+    await wait(120);
+    if (host.state.phase !== "wager") return { c, q };
+
+    // Found the Daily Double early — play it through so the board moves on.
+    host.send({ type: "assignDailyDouble", playerId: "e2e-ann" });
+    await wait(80);
+    ann.send({ type: "setWager", amount: 100 });
+    await wait(100);
+    host.send({ type: "judge", correct: false });
+    await wait(100);
+  }
+  return null;
+}
+
 console.log("\nAnswers are not sent to phones");
-host.send({ type: "openClue", c: 0, q: 0 });
-await wait(120);
+const ordinary = await openOrdinaryClue([
+  [0, 0],
+  [0, 1],
+]);
+check("found an ordinary clue to inspect", ordinary !== null);
+const expectedClue = "Alpha clue worth " + (ordinary.q + 1) * 100;
+const expectedAnswer = "Alpha answer " + (ordinary.q + 1) * 100;
 check(
   "player payload omits the answer while unrevealed",
   ann.state.activeClue?.answer === null,
   JSON.stringify(ann.state.activeClue?.answer),
 );
-check(
-  "player payload includes the clue text",
-  ann.state.activeClue?.clue === "Alpha clue worth 100",
-);
-check("host payload includes the answer", host.state.activeClue?.answer === "Alpha answer 100");
+check("player payload includes the clue text", ann.state.activeClue?.clue === expectedClue);
+check("host payload includes the answer", host.state.activeClue?.answer === expectedAnswer);
 
 console.log("\nBuzzers are disarmed until the host opens them");
 ann.send({ type: "buzz" });
@@ -171,48 +204,120 @@ await wait(120);
 check("an early buzz is refused", ann.rejected.at(-1) === "not-armed", ann.rejected.at(-1));
 check("nobody is buzzed in", host.state.buzzedPlayer === null);
 
-console.log("\nSimultaneous buzz, 10 fresh clues");
-let annWins = 0,
-  boWins = 0,
-  noWinner = 0,
-  badNotify = 0;
+console.log("\nSimultaneous buzz across the rest of the board");
 
-for (let i = 0; i < 10; i++) {
-  const c = i < 5 ? 0 : 1;
-  const q = i % 5;
-  if (i > 0) {
-    host.send({ type: "openClue", c, q });
-    await wait(60);
+function nextUnrevealed(board) {
+  for (let c = 0; c < board.categories.length; c++) {
+    const clues = board.categories[c].clues;
+    for (let q = 0; q < clues.length; q++) if (!clues[q].revealed) return { c, q };
   }
-  const beforeA = ann.rejected.length,
-    beforeB = bo.rejected.length;
-
-  host.send({ type: "armBuzzers" });
-  await wait(60);
-
-  // Same event-loop turn. Alternate the order so a fixed winner would show up.
-  if (i % 2 === 0) {
-    ann.send({ type: "buzz" });
-    bo.send({ type: "buzz" });
-  } else {
-    bo.send({ type: "buzz" });
-    ann.send({ type: "buzz" });
-  }
-  await wait(130);
-
-  const who = host.state.buzzedPlayer;
-  if (who === "e2e-ann") annWins++;
-  else if (who === "e2e-bo") boWins++;
-  else noWinner++;
-
-  const newRejects =
-    ann.rejected.length - beforeA + (bo.rejected.length - beforeB);
-  if (newRejects !== 1) badNotify++;
-
-  host.send({ type: "closeClue" });
-  await wait(60);
+  return null;
 }
 
+let races = 0,
+  firstSenderWon = 0,
+  noWinner = 0,
+  badNotify = 0,
+  dailyDoubles = 0;
+
+// The clue opened for the payload checks above is still sitting open.
+let cell = { c: ordinary.c, q: ordinary.q };
+
+while (cell) {
+  // A Daily Double is nobody's to race for — play it out and move on.
+  if (host.state.phase === "wager") {
+    dailyDoubles++;
+    bo.send({ type: "setWager", amount: 200 });
+    await wait(100);
+    check(
+      "a bet before the host assigns it is refused",
+      bo.wagerRejected.at(-1) === "no-wager-player",
+      String(bo.wagerRejected.at(-1)),
+    );
+
+    host.send({ type: "assignDailyDouble", playerId: "e2e-bo" });
+    await wait(80);
+    check(
+      "the clue is withheld from phones while the bet is open",
+      ann.state.activeClue?.clue === null,
+      JSON.stringify(ann.state.activeClue?.clue),
+    );
+
+    ann.send({ type: "setWager", amount: 200 });
+    await wait(100);
+    check(
+      "only the assigned player may bet",
+      ann.wagerRejected.at(-1) === "not-your-wager",
+      String(ann.wagerRejected.at(-1)),
+    );
+
+    bo.send({ type: "setWager", amount: 250 });
+    await wait(100);
+    check(
+      "a bet that is not a whole hundred is refused",
+      bo.wagerRejected.at(-1) === "bad-increment",
+      String(bo.wagerRejected.at(-1)),
+    );
+
+    const before = host.state.players.find((p) => p.id === "e2e-bo").score;
+    bo.send({ type: "setWager", amount: 200 });
+    await wait(120);
+    check(
+      "a locked bet hands the clue to that player with no buzzing",
+      host.state.buzzedPlayer === "e2e-bo" && host.state.buzzersArmed === false,
+      String(host.state.buzzedPlayer),
+    );
+    check(
+      "phones can read the clue once the bet is locked",
+      typeof ann.state.activeClue?.clue === "string",
+    );
+
+    host.send({ type: "judge", correct: true });
+    await wait(100);
+    check(
+      "the bet is paid, not the clue value",
+      host.state.players.find((p) => p.id === "e2e-bo").score === before + 200,
+    );
+  } else {
+    const beforeA = ann.rejected.length,
+      beforeB = bo.rejected.length;
+
+    host.send({ type: "armBuzzers" });
+    await wait(60);
+
+    // Same event-loop turn. Alternate the order so a fixed winner would show up.
+    const annFirst = races % 2 === 0;
+    if (annFirst) {
+      ann.send({ type: "buzz" });
+      bo.send({ type: "buzz" });
+    } else {
+      bo.send({ type: "buzz" });
+      ann.send({ type: "buzz" });
+    }
+    await wait(130);
+
+    const who = host.state.buzzedPlayer;
+    races++;
+    if (!who) noWinner++;
+    else if (who === (annFirst ? "e2e-ann" : "e2e-bo")) firstSenderWon++;
+
+    const newRejects =
+      ann.rejected.length - beforeA + (bo.rejected.length - beforeB);
+    if (newRejects !== 1) badNotify++;
+
+    host.send({ type: "closeClue" });
+    await wait(60);
+  }
+
+  cell = nextUnrevealed(host.state.board);
+  if (cell) {
+    host.send({ type: "openClue", c: cell.c, q: cell.q });
+    await wait(60);
+  }
+}
+
+check("exactly one daily double turned up", dailyDoubles === 1, String(dailyDoubles));
+check("every other clue was raced for", races === 9, String(races));
 check("every race produced exactly one winner", noWinner === 0, noWinner + " had none");
 check(
   "the loser was told exactly once each time",
@@ -221,8 +326,8 @@ check(
 );
 check(
   "send order decides the winner, not the player",
-  annWins === 5 && boWins === 5,
-  "ann " + annWins + " / bo " + boWins,
+  firstSenderWon === races,
+  firstSenderWon + " of " + races,
 );
 check("the board is complete", host.state.complete === true);
 check("phase is done", host.state.phase === "done", host.state.phase);
@@ -260,6 +365,22 @@ await wait(150);
 // $300 clue, Cal buzzes and gets it wrong, Dee buzzes and gets it right.
 h2.send({ type: "openClue", c: 0, q: 2 });
 await wait(80);
+
+// The Daily Double may have landed on that square. Play it out of the way and
+// use the other category's $300 instead — same value, so the sums below hold.
+if (h2.state.phase === "wager") {
+  h2.send({ type: "assignDailyDouble", playerId: "s-1" });
+  await wait(80);
+  p1.send({ type: "setWager", amount: 100 });
+  await wait(100);
+  h2.send({ type: "judge", correct: true });
+  await wait(100);
+  h2.send({ type: "adjustScore", playerId: "s-1", delta: -100 });
+  await wait(80);
+  h2.send({ type: "openClue", c: 1, q: 2 });
+  await wait(80);
+}
+
 h2.send({ type: "armBuzzers" });
 await wait(80);
 p1.send({ type: "buzz" });
