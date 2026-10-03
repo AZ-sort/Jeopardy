@@ -20,6 +20,7 @@ import {
   assignDailyDouble,
   setWager,
   maxWager,
+  startNextRound,
   PHASE,
 } from "../lib/game.js";
 
@@ -44,11 +45,20 @@ const LAST_CLUE = () => 0.999;
 /** Puts the Daily Double on the very first clue, Alpha $100. */
 const FIRST_CLUE = () => 0;
 
+/** Wraps a single-board fixture in the round wrapper `setBoard` now takes. */
+function wrapped(options = {}) {
+  return {
+    rounds: [testBoard(), testBoard()],
+    final: null,
+    options: { doubleRound: false, finalRound: false, ...options },
+  };
+}
+
 function twoPlayerGame(random = LAST_CLUE) {
   const g = createGame("ABCD");
   addPlayer(g, { id: "p1", name: "Ann" });
   addPlayer(g, { id: "p2", name: "Bo" });
-  setBoard(g, testBoard());
+  setBoard(g, wrapped());
   startGame(g, { random });
   return g;
 }
@@ -129,7 +139,7 @@ test("the game will not start without a board", () => {
 
 test("the game will not start with no players", () => {
   const g = createGame("ABCD");
-  setBoard(g, testBoard());
+  setBoard(g, wrapped());
   assert.equal(startGame(g).ok, false);
 });
 
@@ -598,4 +608,102 @@ test("closing a daily double clears the wagering player", () => {
   setWager(g, "p1", 300);
   judge(g, true);
   assert.equal(g.wagerPlayer, null);
+});
+
+// ---------------------------------------------------------------- rounds
+
+function twoRoundGame(random = LAST_CLUE) {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  addPlayer(g, { id: "p2", name: "Bo" });
+  setBoard(g, wrapped({ doubleRound: true }));
+  startGame(g, { random });
+  return g;
+}
+
+function playWholeBoard(g) {
+  for (let c = 0; c < g.board.categories.length; c++) {
+    for (let q = 0; q < g.board.categories[c].clues.length; q++) {
+      openClue(g, c, q);
+      closeClue(g);
+    }
+  }
+}
+
+test("a one-round game still ends at done, exactly as before", () => {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  setBoard(g, wrapped({ doubleRound: false }));
+  startGame(g, { random: LAST_CLUE });
+  playWholeBoard(g);
+  assert.equal(g.phase, PHASE.DONE);
+});
+
+test("finishing round 1 with a second round to come pauses at the round end", () => {
+  const g = twoRoundGame();
+  playWholeBoard(g);
+  assert.equal(g.phase, PHASE.ROUND_END);
+  assert.equal(g.roundIndex, 0);
+});
+
+test("starting round 2 loads the second board at its own values", () => {
+  const g = twoRoundGame();
+  playWholeBoard(g);
+  const res = startNextRound(g, { random: LAST_CLUE });
+
+  assert.equal(res.ok, true);
+  assert.equal(g.phase, PHASE.BOARD);
+  assert.equal(g.roundIndex, 1);
+  assert.equal(g.board.categories[0].clues[0].revealed, false);
+});
+
+test("round 2 hides two daily doubles, round 1 hides one", () => {
+  const g = twoRoundGame();
+  const inRound1 = g.board.categories.flatMap((c) => c.clues).filter((c) => c.dailyDouble);
+  assert.equal(inRound1.length, 1);
+
+  playWholeBoard(g);
+  startNextRound(g, { random: LAST_CLUE });
+  const inRound2 = g.board.categories.flatMap((c) => c.clues).filter((c) => c.dailyDouble);
+  assert.equal(inRound2.length, 2);
+});
+
+test("two daily doubles land on different squares even in a one-category round", () => {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  const board = wrapped({ doubleRound: true });
+  board.rounds[1] = { categories: [testBoard().categories[0]] };
+  setBoard(g, board);
+  startGame(g, { random: LAST_CLUE });
+  playWholeBoard(g);
+  startNextRound(g, { random: () => 0.5 });
+
+  const marked = g.board.categories.flatMap((c) => c.clues).filter((c) => c.dailyDouble);
+  assert.equal(marked.length, 2, "two squares must be marked, not one square twice");
+});
+
+test("starting the next round twice is refused rather than skipping one", () => {
+  const g = twoRoundGame();
+  playWholeBoard(g);
+  assert.equal(startNextRound(g, { random: LAST_CLUE }).ok, true);
+
+  const second = startNextRound(g, { random: LAST_CLUE });
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, "wrong-phase");
+  assert.equal(g.roundIndex, 1, "the board in progress must not be reshuffled");
+});
+
+test("finishing the last round ends the game", () => {
+  const g = twoRoundGame();
+  playWholeBoard(g);
+  startNextRound(g, { random: LAST_CLUE });
+  playWholeBoard(g);
+  assert.equal(g.phase, PHASE.DONE);
+});
+
+test("the player view says which round is being played", () => {
+  const g = twoRoundGame();
+  const view = publicState(g, { forHost: false });
+  assert.equal(view.round, 1);
+  assert.equal(view.rounds, 2);
 });
