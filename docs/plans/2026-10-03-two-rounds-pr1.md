@@ -16,7 +16,7 @@
 - Every mutating rule returns `{ok: true}` or `{ok: false, reason}` rather than throwing.
 - Round 1 values are `[100, 200, 300, 400, 500]`; round 2 values are `[200, 400, 600, 800, 1000]`.
 - Round 1 hides 1 Daily Double; round 2 hides 2.
-- `NUM_CATEGORIES = 6`, `NUM_ROUNDS = 2`.
+- `MAX_CATEGORIES = 6` (a ceiling, not a count — a round may hold 1 to 6), `NUM_ROUNDS = 2`. The old name `NUM_CATEGORIES` is renamed everywhere it is imported: `lib/board.js`, `server.js`, `public/js/host.js`.
 - The player payload must never carry `dailyDouble` for any round — host-only until a square is opened.
 - No conversion of old-shape `{categories}` boards. `validateBoard` rejects them with a clear error.
 - Branch, commit, push, open a PR with a test plan — never merge, force-push, or push to `main`.
@@ -28,6 +28,7 @@
 3. **Two Daily Doubles in a round with only one filled category** — must still land on two *distinct squares* rather than looping or double-marking one. (Task 2)
 4. **"Start round 2" pressed twice** — the second press must be refused, not skip a round or re-place Daily Doubles on a board in progress. (Task 2)
 5. **A generate request with a missing or out-of-range `roundIndex`** — must be rejected, never silently write a category into round 1. (Task 3)
+6. **Removing a category column while its AI generation is in flight** — removal renumbers everything after it, so the arriving category would land on the wrong column. (Task 5)
 
 ---
 
@@ -130,6 +131,24 @@ test("answers are collected from every round so the AI does not repeat one", () 
   assert.ok(answers.includes("One answer 100"));
   assert.ok(answers.includes("Two answer 1000"));
 });
+
+test("a round may hold anywhere from one to six categories", () => {
+  const board = playableBoard();
+  const one = board.rounds[0].categories[0];
+  board.rounds[0].categories = [one, { ...one, title: "Two" }, { ...one, title: "Three" }];
+  assert.equal(validateBoard(board).ok, true);
+
+  board.rounds[0].categories = Array.from({ length: 7 }, (_, i) => ({ ...one, title: "C" + i }));
+  assert.equal(validateBoard(board).ok, false, "seven is past the ceiling");
+});
+
+test("a played round with every category removed is refused", () => {
+  const board = playableBoard();
+  board.rounds[0].categories = [];
+  const res = validateBoard(board);
+  assert.equal(res.ok, false);
+  assert.match(res.error, /no categories/);
+});
 ```
 
 - [ ] **Step 2: Run the tests and watch them fail**
@@ -148,7 +167,7 @@ export const ROUND_VALUES = [
 ];
 /** Round 1's values. Kept under the old name because the host UI imports it. */
 export const CLUE_VALUES = ROUND_VALUES[0];
-export const NUM_CATEGORIES = 6;
+export const MAX_CATEGORIES = 6;
 export const NUM_ROUNDS = ROUND_VALUES.length;
 
 const CategorySchema = z.object({
@@ -159,7 +178,7 @@ const CategorySchema = z.object({
 // No `.min(1)`: a round the host never filled in compacts to zero categories,
 // and that must stay parseable so an untouched round 2 cannot block the game.
 const RoundSchema = z.object({
-  categories: z.array(CategorySchema).max(NUM_CATEGORIES),
+  categories: z.array(CategorySchema).max(MAX_CATEGORIES),
 });
 
 const FinalSchema = z
@@ -198,7 +217,7 @@ export function blankCategory(title = "", round = 0) {
 
 export function blankRound(round) {
   return {
-    categories: Array.from({ length: NUM_CATEGORIES }, () => blankCategory("", round)),
+    categories: Array.from({ length: MAX_CATEGORIES }, () => blankCategory("", round)),
   };
 }
 
@@ -573,7 +592,7 @@ git commit -m "Play an optional second round at 200-1000"
 
 **Files:**
 - Modify: `server.js`
-- Test: exercised by Task 5's smoke test; the rules are already covered by Task 2.
+- Test: exercised by Task 7's smoke test; the rules are already covered by Task 2.
 
 **Interfaces:**
 - Consumes: `startNextRound`, `PHASE.ROUND_END` from Task 2; `blankBoard`, `compactBoard`, `validateBoard`, `collectAnswers` from Task 1.
@@ -609,7 +628,7 @@ In the generate endpoint, replace the category-index validation and the write:
   if (!Number.isInteger(round) || round < 0 || round >= NUM_ROUNDS) {
     return res.status(400).json({ error: "Bad round." });
   }
-  if (!Number.isInteger(index) || index < 0 || index >= NUM_CATEGORIES) {
+  if (!Number.isInteger(index) || index < 0 || index >= MAX_CATEGORIES) {
     return res.status(400).json({ error: "Bad category slot." });
   }
 
@@ -708,7 +727,7 @@ function buildSetup() {
       slots.append(head);
     }
 
-    for (let c = 0; c < NUM_CATEGORIES; c++) {
+    for (let c = 0; c < MAX_CATEGORIES; c++) {
       if (!draft.rounds[r].categories[c]) {
         draft.rounds[r].categories[c] = blankCategory("", r);
       }
@@ -720,7 +739,7 @@ function buildSetup() {
 }
 ```
 
-Import `blankRound`, `blankCategory`, `NUM_ROUNDS` and `ROUND_VALUES` wherever `CLUE_VALUES` and `NUM_CATEGORIES` come from today.
+Import `blankRound`, `blankCategory`, `NUM_ROUNDS` and `ROUND_VALUES` wherever `CLUE_VALUES` and `MAX_CATEGORIES` come from today.
 
 - [ ] **Step 3: Thread the round through the slot builder**
 
@@ -812,7 +831,136 @@ git commit -m "Author both rounds from one setup screen"
 
 ---
 
-### Task 5: The round-end screen
+### Task 5: Add and remove category columns
+
+**Files:**
+- Modify: `server.js`, `public/js/host.js`, `public/css/app.css`
+
+**Interfaces:**
+- Consumes: `MAX_CATEGORIES`, `blankCategory(title, round)` from Task 1; `buildSlot(r, c)` and `buildSetup()` from Task 4.
+- Produces: nothing other tasks read.
+
+The rules side of this is already done and tested: Task 1's schema caps a round
+at `MAX_CATEGORIES`, allows as few as one, and refuses a played round with
+none. This task is the controls that let a host actually get there, so it is
+verified by hand in the browser like Task 4 — the repo has no DOM tests and
+this plan does not introduce a harness for them.
+
+- [ ] **Step 1: Add the controls to the setup screen**
+
+In `public/js/host.js`, track what is generating so a column cannot be pulled out from under an in-flight write:
+
+```js
+/** "round:category" for every slot with a generation in flight. */
+const generating = new Set();
+```
+
+Set `generating.add(`${r}:${c}`)` where `genBtn.disabled = true` already happens, and delete it in both the success and failure paths.
+
+In `buildSlot(r, c)`, next to the category heading:
+
+```js
+  const remove = document.createElement("button");
+  remove.className = "slot__remove";
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.title = "Remove this category";
+  remove.setAttribute("aria-label", "Remove round " + (r + 1) + " category " + (c + 1));
+  // Never while this column is being written into: removal renumbers
+  // everything after it, so the arriving category would land elsewhere.
+  remove.disabled =
+    draft.rounds[r].categories.length <= 1 || generating.has(`${r}:${c}`);
+  remove.addEventListener("click", () => {
+    draft.rounds[r].categories.splice(c, 1);
+    queueDraftSave();
+    // Every later column just renumbered, so redraw rather than patch.
+    buildSetup();
+  });
+```
+
+Append `remove` to the same row as the `slot__n` heading.
+
+- [ ] **Step 2: Add the Add-category button**
+
+In `buildSetup()`, after the loop that appends this round's slots:
+
+```js
+    if (draft.rounds[r].categories.length < MAX_CATEGORIES) {
+      const add = document.createElement("button");
+      add.className = "btn btn--quiet slots__add";
+      add.type = "button";
+      add.textContent = "Add category";
+      add.addEventListener("click", () => {
+        draft.rounds[r].categories.push(blankCategory("", r));
+        queueDraftSave();
+        buildSetup();
+      });
+      slots.append(add);
+    }
+```
+
+Change the slot loop from a fixed `MAX_CATEGORIES` count to the round's actual length, and drop the "fill in missing categories" branch — a round's categories are now exactly what the host chose:
+
+```js
+    for (let c = 0; c < draft.rounds[r].categories.length; c++) {
+      slots.append(buildSlot(r, c));
+    }
+```
+
+`blankRound(r)` still starts a fresh round at six, so nothing changes for a host who never touches the controls.
+
+- [ ] **Step 3: Guard the server against a stale index**
+
+In the generate endpoint, the bounds check now has to allow for a round that holds fewer than six, and for a column removed between the click and the request arriving:
+
+```js
+  if (!Number.isInteger(index) || index < 0 || index >= MAX_CATEGORIES) {
+    return res.status(400).json({ error: "Bad category slot." });
+  }
+  if (!room.draft.rounds[round]?.categories[index]) {
+    return res.status(400).json({ error: "That category is no longer on the board." });
+  }
+```
+
+- [ ] **Step 4: Style the controls**
+
+```css
+.slot__remove {
+  border: none;
+  background: none;
+  color: var(--cream-dim);
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 0 6px;
+}
+
+.slot__remove:hover:not(:disabled) {
+  color: var(--coral);
+}
+
+.slot__remove:disabled {
+  opacity: 0.25;
+}
+
+.slots__add {
+  margin: 4px 0 8px;
+}
+```
+
+- [ ] **Step 5: Verify by hand**
+
+Start the server and open the host screen. Confirm: removing a column renumbers the rest and the removed one does not come back on reload; the × is greyed out when only one column is left; **Add category** disappears at six; the × is greyed out on a column mid-"Writing…"; and a three-category board starts and plays.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add lib/board.js server.js public/js/host.js public/css/app.css test/board.test.js
+git commit -m "Add and remove category columns, up to six"
+```
+
+---
+
+### Task 6: The round-end screen
 
 **Files:**
 - Modify: `public/host.html`, `public/js/host.js`, `public/js/play.js`, `public/css/app.css`
@@ -913,7 +1061,7 @@ git commit -m "Pause on a scoreboard between rounds"
 
 ---
 
-### Task 6: End-to-end coverage and the docs
+### Task 7: End-to-end coverage and the docs
 
 **Files:**
 - Modify: `scripts/smoke.mjs`, `README.md`, `CLAUDE.md`
@@ -1070,7 +1218,7 @@ Expected: ALL CHECKS PASSED every time.
 
 - [ ] **Step 4: Update the docs**
 
-In `README.md`, under *Playing*, describe the two setup toggles and the round-end pause, and note round 2 runs 200–1000 with two Daily Doubles. In *Known limits*, replace the "One Daily Double per board" bullet with the fact that round 2 has two. Leave the "Not yet built" bullet listing Final Jeopardy, timers and sound.
+In `README.md`, under *Playing*, describe the two setup toggles and the round-end pause, and note round 2 runs 200–1000 with two Daily Doubles. Replace the line saying empty categories are dropped — that rule still holds underneath, but the screen now has an **×** on each column and an **Add category** button, so document the controls rather than the trick. In *Known limits*, replace the "One Daily Double per board" bullet with the fact that round 2 has two. Leave the "Not yet built" bullet listing Final Jeopardy, timers and sound.
 
 In `CLAUDE.md`, extend the Daily Double section to say the count comes from `DAILY_DOUBLES_PER_ROUND` and that placement prefers one per category, and add a short section on the board wrapper: `{rounds, final, options}`, no conversion of old shapes, `validateBoard` only checks rounds that will be played.
 

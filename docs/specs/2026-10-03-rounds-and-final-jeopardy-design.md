@@ -68,6 +68,36 @@ trio.
 2 must never block *Start the game* — that is the most likely way this feature
 annoys someone, so it is a test, not a note.
 
+### Choosing how many categories
+
+A round has always been playable with fewer than six: `compactBoard` drops any
+category with no title and no clues, and the README has documented it from the
+start. The behaviour is right; the problem is that nothing on screen says so.
+The setup grid looks like six mandatory columns, so a host who wants a quick
+three-category round has no reason to think they can simply skip three.
+
+So the rule becomes visible rather than implicit:
+
+- each category column gets a **×** to remove it;
+- an **Add category** button appears while a round has fewer than six;
+- six stays the ceiling, and **one** is the floor — removing the last column is
+  refused;
+- each round is sized independently, so a six-category round 1 with a
+  three-category round 2 is fine;
+- dropping blank categories stays as the safety net underneath, so a column
+  someone left empty still cannot reach the board.
+
+`NUM_CATEGORIES` stops being a fixed count and becomes `MAX_CATEGORIES`. The
+name is changed rather than kept, because a constant that says "the number of
+categories" when it means "the most you may have" is exactly the sort of thing
+that gets misread later.
+
+One hazard worth naming: removing a column renumbers the ones after it, and
+the generate endpoint keys in-flight work by slot. Deleting column 3 while it
+is being written would land the result on whichever category shuffles into
+that position. The **×** is therefore disabled on a column that is currently
+generating — it already shows "Writing…", so there is no mystery about why.
+
 "Fill with AI" works per category exactly as it does now; round 2 categories
 are no different. `collectAnswers` must gather from every round and from the
 Final Jeopardy answer, so generation does not repeat an answer across rounds —
