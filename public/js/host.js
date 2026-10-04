@@ -780,7 +780,11 @@ function renderFinal(state) {
 
   const f = state.final;
   el("fj-cat").textContent = f.category;
-  el("fj-clue").textContent = f.clue ?? "";
+  // Blank while the room is still betting. The host screen is the one cast to
+  // the TV, so showing the clue here hands it to everyone choosing a bet —
+  // exactly what withholding it from the phones is for. Same reasoning as the
+  // Daily Double, which blanks `c-text` during its wager.
+  el("fj-clue").textContent = state.phase === "final-wager" ? "" : (f.clue ?? "");
 
   const waiting = f.waitingOn
     .map((id) => state.players.find((p) => p.id === id)?.name ?? "?")

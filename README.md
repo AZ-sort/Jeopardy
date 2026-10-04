@@ -117,11 +117,11 @@ You will not be able to show the clue until the last bet is in, and no phone
 can see the clue before then: betting with the question in front of you is not
 Final Jeopardy.
 
-Then the clue goes up and everyone has **30 seconds** to type an answer. When
-the clock runs out the window shuts; anything not sent is not an answer, and
-that player is revealed with a blank. You can also call time early with
-**Everyone's in**. The clock only closes the window — you still choose when the
-reveal begins.
+Then the clue goes up and everyone has **30 seconds** to type an answer, and
+they can change it as often as they like until time is up. When the clock runs
+out the window shuts; anything not sent is not an answer, and that player is
+revealed with a blank. You can also call time early with **Everyone's in**. The
+clock only closes the window — you still choose when the reveal begins.
 
 Answers are turned over one at a time, **poorest first**, each with the bet
 that player staked, for you to rule Correct or Wrong. Nobody can be taken below

@@ -201,7 +201,12 @@ function stopClock() {
 }
 
 el("p-answer-go").addEventListener("click", () => {
-  socket.send({ type: "submitFinalAnswer", answer: el("p-answer").value.trim() });
+  const text = el("p-answer").value.trim();
+  // An empty submission used to lock the box shut with the whole bet riding on
+  // it: the server stored "", which is not null, so the input hid and there was
+  // no way back. Nothing is sent until there is something to send.
+  if (!text) return toast("Write something first.");
+  socket.send({ type: "submitFinalAnswer", answer: text });
 });
 
 /** The phone's view of Final Jeopardy. Returns true when it owns the screen. */
@@ -227,7 +232,9 @@ function renderFinal() {
   // The pad is the Daily Double pad, at a $0 floor.
   wagerPad.hidden = !(betting && mine && !alreadyBet);
   buzzer.hidden = true;
-  el("p-final-answer").hidden = !(phase === "final-clue" && mine && f.myAnswer === null);
+  // Stays open for the whole window, not just until the first submit: the
+  // rules accept a correction right up to the deadline, so the UI should too.
+  el("p-final-answer").hidden = !(phase === "final-clue" && mine);
   el("p-clock").hidden = phase !== "final-clue";
   el("p-clue").textContent = f.clue ?? "";
 
@@ -247,11 +254,17 @@ function renderFinal() {
       renderWager();
     }
   } else if (phase === "final-clue") {
-    el("p-final-note").textContent = f.myAnswer !== null ? `Locked in: ${f.myAnswer}` : "";
+    el("p-final-note").textContent = !mine
+      ? "You joined after the betting started — sit this one out."
+      : f.myAnswer !== null
+        ? `Locked in: ${f.myAnswer} — you can change it until time is up.`
+        : "";
     startClock(f.deadline);
   } else {
     stopClock();
-    el("p-final-note").textContent = "Answers are going up on the big screen.";
+    el("p-final-note").textContent = mine
+      ? "Answers are going up on the big screen."
+      : "Final Jeopardy is being revealed on the big screen.";
   }
   return true;
 }

@@ -166,10 +166,22 @@ Three things here are load-bearing:
 A player is whatever `playerId` string their socket sends (`server.js`), and
 every player's id is broadcast to every other player. That is the reconnect
 mechanism — it is how a backgrounded phone rejoins with its score — but it
-means a player in the room can rejoin as someone else. Before Final Jeopardy
-that bought you a wrongful buzz; now it also exposes that player's secret bet
-and answer. Closing it means issuing a per-player token at join, like
-`hostToken`, and requiring it to reclaim an id.
+means a player in the room can rejoin as someone else.
+
+Before Final Jeopardy that bought a wrongful buzz, which the host sees and can
+undo with ±100. It now also buys **writes**: having claimed someone's id, you
+can stake their whole score and submit a garbage answer as them, in one
+message, at the climax of the game, with the score controls behind the `.final`
+takeover. The read side matters too — you can see their bet and answer, and
+bets stay overwritable for the whole betting phase, so you can look and then
+revise your own.
+
+One thing limits it: hijacking an id force-closes the victim's socket with a
+fatal "You joined from another device", and the client does not auto-reconnect
+after a fatal. The attack is loud, not silent.
+
+Closing it means issuing a per-player token at join, like `hostToken`, and
+requiring it to reclaim an id.
 
 ## Not built yet
 

@@ -1068,6 +1068,48 @@ test("only players already turned over appear in the player view", () => {
   assert.equal(after.final.revealed[0].wager, 200);
 });
 
+test("someone who left before the final does not hold the round up forever", () => {
+  // They keep their score on the scoreboard, as they always have, but the
+  // room cannot sit waiting for a bet from a phone that has gone home.
+  const g = atFinal();
+  setConnectedFalse(g, "p2");
+  startFinal(g);
+
+  assert.equal(g.finalRound.wagers["p2"], 0, "a departed player is entered at $0");
+  setFinalWager(g, "p1", 300);
+  assert.equal(allFinalWagersIn(g), true, "the round must not block on someone who left");
+  assert.equal(revealFinalClue(g, 1_000_000).ok, true);
+});
+
+test("someone who left and comes back during the betting can still bet", () => {
+  const g = atFinal();
+  setConnectedFalse(g, "p2");
+  startFinal(g);
+  addPlayer(g, { id: "p2", name: "Bo" }); // their phone reconnects
+
+  assert.equal(setFinalWager(g, "p2", 400).ok, true);
+  assert.equal(g.finalRound.wagers["p2"], 400);
+});
+
+test("final jeopardy cannot take a player below nothing even after a score correction", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 1000); // Ann stakes her whole $1000.
+  setFinalWager(g, "p2", 0);
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+
+  // The host corrects an earlier mis-ruling after the bet was locked in.
+  adjustScore(g, "p1", -500);
+  judgeFinal(g, true); // Bo, $0
+  judgeFinal(g, false); // Ann, wrong, staked 1000 but only holds 500
+
+  assert.ok(
+    g.players.find((p) => p.id === "p1").score >= 0,
+    "the last bet of the night must never leave anyone in the red",
+  );
+});
+
 test("a player id that collides with Object's own keys is handled as data", () => {
   // Player ids arrive from the client, so one can be "toString" or
   // "constructor". A plain {} would report those as already present and the
