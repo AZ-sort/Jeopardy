@@ -143,6 +143,15 @@ function buildSetup() {
       slots.append(add);
     }
   }
+  el("s-final").checked = Boolean(draft.options?.finalRound);
+  el("finalbox").hidden = !draft.options?.finalRound;
+  if (draft.options?.finalRound) {
+    if (!draft.final) draft.final = { category: "", clue: "", answer: "" };
+    el("f-cat").value = draft.final.category;
+    el("f-clue").value = draft.final.clue;
+    el("f-ans").value = draft.final.answer;
+  }
+
   setupBuilt = true;
   // Account state decides whether the board list can be populated at all, so
   // it is fetched first rather than loading a list we may not be allowed.
@@ -156,6 +165,24 @@ el("s-double").addEventListener("change", (e) => {
   // draft either way, so toggling off and on again loses nothing.
   buildSetup();
 });
+
+el("s-final").addEventListener("change", (e) => {
+  draft.options.finalRound = e.target.checked;
+  queueDraftSave();
+  buildSetup();
+});
+
+for (const [id, key] of [
+  ["f-cat", "category"],
+  ["f-clue", "clue"],
+  ["f-ans", "answer"],
+]) {
+  el(id).addEventListener("input", (e) => {
+    if (!draft.final) draft.final = { category: "", clue: "", answer: "" };
+    draft.final[key] = e.target.value;
+    queueDraftSave();
+  });
+}
 
 /** Resizes a textarea to fit its content. */
 function autoGrow(box) {
