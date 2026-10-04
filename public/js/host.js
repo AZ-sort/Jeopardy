@@ -544,6 +544,7 @@ function render(state) {
   renderClue(state);
   renderRoundEnd(state);
   renderFinal(state);
+  renderGameOver(state);
 }
 
 function renderLobby(state) {
@@ -690,6 +691,8 @@ function renderClue(state) {
 
   el("c-yes").hidden = !buzzed;
   el("c-no").hidden = !buzzed;
+  // Only ever shown if the buzzers somehow ended up shut with the clue still
+  // live — normally they open with the clue and re-open after a wrong answer.
   el("c-arm").hidden = Boolean(buzzed) || state.buzzersArmed || state.answerRevealed;
   el("c-reveal").hidden = state.answerRevealed;
 }
@@ -808,6 +811,40 @@ function renderFinal(state) {
     el("fj-answer").textContent = f.current.answer || "— nothing written —";
     el("fj-bet").textContent = "Bet $" + f.current.wager;
     el("fj-status").textContent = `${f.revealIndex + 1} of ${f.order.length}, poorest first.`;
+  }
+}
+
+/**
+ * The finish. Without this the board simply sat there spent, while the phones
+ * told everyone the final scores were on a screen that never showed them.
+ */
+function renderGameOver(state) {
+  const over = state.phase === "done";
+  el("gameover").hidden = !over;
+  if (!over) return;
+
+  const ranked = [...state.players].sort((a, b) => b.score - a.score);
+  const top = ranked[0]?.score ?? 0;
+  // A draw at the top is a draw, not an arbitrary first row.
+  const winners = ranked.filter((p) => p.score === top && top > 0);
+  el("go-winner").textContent =
+    winners.length === 0
+      ? "Nobody finished in the black."
+      : winners.length === 1
+        ? `${winners[0].name} wins with $${top}`
+        : `${winners.map((w) => w.name).join(" and ")} tie on $${top}`;
+
+  const scores = el("go-scores");
+  scores.textContent = "";
+  for (const p of ranked) {
+    const row = document.createElement("div");
+    row.className = "roundend__row";
+    const name = document.createElement("span");
+    name.textContent = p.name;
+    const score = document.createElement("b");
+    score.textContent = (p.score < 0 ? "−$" : "$") + Math.abs(p.score);
+    row.append(name, score);
+    scores.append(row);
   }
 }
 

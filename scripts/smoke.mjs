@@ -194,6 +194,9 @@ async function openOrdinaryClue(cells) {
     await wait(100);
     host.send({ type: "judge", correct: false });
     await wait(100);
+    // A judged clue stays on screen with its answer; the host closes it.
+    host.send({ type: "closeClue" });
+    await wait(80);
   }
   return null;
 }
@@ -214,11 +217,16 @@ check(
 check("player payload includes the clue text", ann.state.activeClue?.clue === expectedClue);
 check("host payload includes the answer", host.state.activeClue?.answer === expectedAnswer);
 
-console.log("\nBuzzers are disarmed until the host opens them");
+console.log("\nBuzzers open with the clue, and shut once the answer is up");
+check("the buzzers are already live", host.state.buzzersArmed === true);
+host.send({ type: "revealAnswer" });
+await wait(120);
 ann.send({ type: "buzz" });
 await wait(120);
-check("an early buzz is refused", ann.rejected.at(-1) === "not-armed", ann.rejected.at(-1));
+check("a buzz after the answer is refused", ann.rejected.at(-1) === "not-armed", ann.rejected.at(-1));
 check("nobody is buzzed in", host.state.buzzedPlayer === null);
+host.send({ type: "closeClue" });
+await wait(120);
 
 console.log("\nSimultaneous buzz across the rest of the board");
 
@@ -235,8 +243,12 @@ let races = 0,
   noWinner = 0,
   badNotify = 0;
 
-// The clue opened for the payload checks above is still sitting open.
-let cell = { c: ordinary.c, q: ordinary.q };
+// The payload-check clue above has been closed out, so start on the next one.
+let cell = nextUnrevealed(host.state.board);
+if (cell) {
+  host.send({ type: "openClue", c: cell.c, q: cell.q });
+  await wait(80);
+}
 
 while (cell) {
   // A Daily Double is nobody's to race for — play it out and move on.
@@ -289,9 +301,12 @@ while (cell) {
 
     host.send({ type: "judge", correct: true });
     await wait(100);
+    const paid = host.state.players.find((p) => p.id === "e2e-bo").score;
+    host.send({ type: "closeClue" });
+    await wait(80);
     check(
       "the bet is paid, not the clue value",
-      host.state.players.find((p) => p.id === "e2e-bo").score === before + 200,
+      paid === before + 200,
     );
   } else {
     const beforeA = ann.rejected.length,
@@ -332,7 +347,7 @@ while (cell) {
 }
 
 check("exactly one daily double turned up", dailyDoubles === 1, String(dailyDoubles));
-check("every other clue was raced for", races === 9, String(races));
+check("every other clue was raced for", races === 8, String(races));
 check("every race produced exactly one winner", noWinner === 0, noWinner + " had none");
 check(
   "the loser was told exactly once each time",
@@ -425,7 +440,10 @@ check("another player can still buzz", h2.state.buzzedPlayer === "s-2");
 h2.send({ type: "judge", correct: true });
 await wait(100);
 check("a correct answer awards the value", dee().score === 300, String(dee().score));
-check("the clue closes", h2.state.phase === "board", h2.state.phase);
+check("the answer goes up for the room", h2.state.answerRevealed === true);
+h2.send({ type: "closeClue" });
+await wait(100);
+check("the clue closes when the host closes it", h2.state.phase === "board", h2.state.phase);
 check(
   "the clue is marked played",
   h2.state.board.categories[0].clues[2].revealed === true,
@@ -534,6 +552,8 @@ async function playEveryClue(host, player, playerId) {
       await wait(100);
       host.send({ type: "judge", correct: false });
       await wait(100);
+      host.send({ type: "closeClue" });
+      await wait(70);
     } else {
       host.send({ type: "closeClue" });
       await wait(70);
