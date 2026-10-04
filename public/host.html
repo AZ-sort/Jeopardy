@@ -44,12 +44,23 @@
           <span>Second round <small>another board at $200–$1000</small></span>
         </label>
         <label class="toggle">
-          <input type="checkbox" id="s-final" disabled />
-          <span>Final Jeopardy <small>coming soon</small></span>
+          <input type="checkbox" id="s-final" />
+          <span>Final Jeopardy <small>one clue, everyone bets</small></span>
         </label>
       </div>
 
       <div class="slots" id="slots"></div>
+
+      <div class="finalbox" id="finalbox" hidden>
+        <h2 class="slots__round">Final Jeopardy</h2>
+        <input type="text" id="f-cat" placeholder="Category name" aria-label="Final Jeopardy category" />
+        <textarea
+          id="f-clue"
+          placeholder="Clue (a statement, not a question)"
+          aria-label="Final Jeopardy clue"
+        ></textarea>
+        <input type="text" id="f-ans" placeholder="Answer" aria-label="Final Jeopardy answer" />
+      </div>
 
       <div class="setup__actions">
         <input
@@ -131,6 +142,24 @@
       <p class="roundend__done" id="re-done"></p>
       <div class="roundend__scores" id="re-scores"></div>
       <button class="btn btn--go" id="re-next">Start round 2</button>
+      <button class="btn btn--go" id="re-final" hidden>Start Final Jeopardy</button>
+    </div>
+
+    <div class="final" id="final" hidden>
+      <p class="final__cat" id="fj-cat"></p>
+      <p class="final__clue" id="fj-clue"></p>
+      <p class="final__status" id="fj-status"></p>
+      <div class="final__reveal" id="fj-reveal" hidden>
+        <p class="final__who" id="fj-who"></p>
+        <p class="final__answer" id="fj-answer"></p>
+        <p class="final__bet" id="fj-bet"></p>
+      </div>
+      <div class="controls">
+        <button class="btn btn--go" id="fj-show">Show the clue</button>
+        <button class="btn btn--quiet" id="fj-stop">Everyone's in</button>
+        <button class="btn btn--yes" id="fj-yes" hidden>Correct</button>
+        <button class="btn btn--no" id="fj-no" hidden>Wrong</button>
+      </div>
     </div>
 
     <script type="module" src="/js/host.js"></script>

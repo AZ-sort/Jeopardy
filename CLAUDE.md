@@ -130,10 +130,60 @@ Two things here are load-bearing and easy to undo by accident:
 The wager ceiling comes from the board's own highest value, not a hardcoded
 500, so a second 200–1000 board will work without touching it.
 
+## Final Jeopardy
+
+Three phases after the last board: `final-wager`, `final-clue`, `final-reveal`.
+Bets run **$0 to the player's own score** in hundreds — deliberately unlike a
+Daily Double's $100 floor and board-high ceiling, because there is no playing
+your way back from the last bet of the night. That yields an invariant worth
+keeping: **Final Jeopardy can never take a player below $0.** Anyone at or
+below zero is entered at a forced $0 so the room is not waiting on a bet they
+cannot place.
+
+Two names that are easy to confuse: **`game.final` is the authored clue**
+(`{category, clue, answer}`, set by `setBoard`), while **`game.finalRound` is
+the play state** (`playing`, `wagers`, `answers`, `deadline`, `order`,
+`revealIndex`, `judged`).
+
+Three things here are load-bearing:
+
+- **The rules hold a deadline; the server owns the timer.** `lib/game.js` never
+  reads the clock — `revealFinalClue(game, now)` and `submitFinalAnswer(…, now)`
+  take the time as an argument, so the suite never waits on one. `armFinalTimer`
+  in `server.js` owns the single `setTimeout` and cancels it if the host calls
+  time early. `closeFinalAnswers` is idempotent by phase, so a late timer cannot
+  undo an early close.
+- **`publicState` is per-player.** `broadcast` builds one payload per socket, not
+  one shared payload, because each phone must see its own bet and answer and
+  nobody else's. The clue is host-only until every bet is in; another player's
+  bet and answer stay out of the payload until the reveal reaches them.
+- **The wager/answer maps are `Object.create(null)`.** Player ids come from the
+  client, so one can be `"toString"`; on a plain object that key reads as
+  already present and the round would advance without that player's bet.
+
+## Known weakness: a player's identity is not authenticated
+
+A player is whatever `playerId` string their socket sends (`server.js`), and
+every player's id is broadcast to every other player. That is the reconnect
+mechanism — it is how a backgrounded phone rejoins with its score — but it
+means a player in the room can rejoin as someone else.
+
+Before Final Jeopardy that bought a wrongful buzz, which the host sees and can
+undo with ±100. It now also buys **writes**: having claimed someone's id, you
+can stake their whole score and submit a garbage answer as them, in one
+message, at the climax of the game, with the score controls behind the `.final`
+takeover. The read side matters too — you can see their bet and answer, and
+bets stay overwritable for the whole betting phase, so you can look and then
+revise your own.
+
+One thing limits it: hijacking an id force-closes the victim's socket with a
+fatal "You joined from another device", and the client does not auto-reconnect
+after a fatal. The attack is loud, not silent.
+
+Closing it means issuing a per-player token at join, like `hostToken`, and
+requiring it to reclaim an id.
+
 ## Not built yet
 
-Final Jeopardy, sound, and any timer outside Final Jeopardy's answer window.
-The `final` field and the `finalRound` toggle already exist in the board shape
-and the setup screen shows the checkbox disabled, so PR 2 adds behaviour rather
-than changing the shape again. The design for it is in
-`docs/specs/2026-10-03-rounds-and-final-jeopardy-design.md`.
+Sound, and any timer outside Final Jeopardy's answer window. The design for
+what shipped is in `docs/specs/2026-10-03-rounds-and-final-jeopardy-design.md`.

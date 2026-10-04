@@ -58,8 +58,15 @@
         <p class="play__meta" id="p-meta"></p>
         <button class="buzzer" id="buzz" disabled>Wait</button>
 
+        <!-- Final Jeopardy's heading sits above the bet pad, which the round
+             borrows from the Daily Double. -->
+        <div class="finalplay" id="p-final" hidden>
+          <p class="finalplay__title">Final Jeopardy</p>
+          <p class="finalplay__clock" id="p-clock" hidden></p>
+        </div>
+
         <div class="wager" id="p-wager" hidden>
-          <p class="wager__title">Daily Double</p>
+          <p class="wager__title" id="p-wager-title">Daily Double</p>
           <div class="wager__row">
             <button class="wager__step" id="p-wager-down" type="button" aria-label="Bet less">
               −
@@ -71,6 +78,19 @@
           </div>
           <p class="wager__limit" id="p-wager-limit"></p>
           <button class="btn btn--go" id="p-wager-go">Lock it in</button>
+        </div>
+
+        <div class="finalplay" id="p-final-rest" hidden>
+          <div id="p-final-answer" hidden>
+            <textarea
+              id="p-answer"
+              maxlength="200"
+              placeholder="Your answer"
+              aria-label="Your Final Jeopardy answer"
+            ></textarea>
+            <button class="btn btn--go" id="p-answer-go">Lock it in</button>
+          </div>
+          <p class="finalplay__note" id="p-final-note"></p>
         </div>
 
         <p class="play__clue" id="p-clue"></p>

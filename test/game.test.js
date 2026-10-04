@@ -21,6 +21,16 @@ import {
   setWager,
   maxWager,
   startNextRound,
+  startFinal,
+  finalMaxWager,
+  setFinalWager,
+  allFinalWagersIn,
+  judgeFinal,
+  revealFinalClue,
+  submitFinalAnswer,
+  closeFinalAnswers,
+  FINAL_ANSWER_SECONDS,
+  FINAL_ANSWER_MAX,
   PHASE,
 } from "../lib/game.js";
 
@@ -706,4 +716,464 @@ test("the player view says which round is being played", () => {
   const view = publicState(g, { forHost: false });
   assert.equal(view.round, 1);
   assert.equal(view.rounds, 2);
+});
+
+// ---------------------------------------------------------------- per-player views
+
+test("a player payload is built for one named player", () => {
+  const g = twoPlayerGame();
+  const forAnn = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(forAnn.you, "p1");
+
+  const forBo = publicState(g, { forHost: false, playerId: "p2" });
+  assert.equal(forBo.you, "p2");
+});
+
+test("the host payload has no player identity", () => {
+  const g = twoPlayerGame();
+  assert.equal(publicState(g, { forHost: true }).you, null);
+});
+
+// ---------------------------------------------------------------- final jeopardy
+
+/** A board with a Final Jeopardy clue and the toggle on. */
+function finalBoard(options = {}) {
+  return {
+    rounds: [testBoard()],
+    final: { category: "Last Things", clue: "The final clue", answer: "The final answer" },
+    options: { doubleRound: false, finalRound: true, ...options },
+  };
+}
+
+/** A finished one-round game sitting at the round end, final still to come. */
+function atFinal() {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  addPlayer(g, { id: "p2", name: "Bo" });
+  setBoard(g, finalBoard());
+  startGame(g, { random: LAST_CLUE });
+  adjustScore(g, "p1", 1000);
+  adjustScore(g, "p2", 400);
+  playWholeBoard(g);
+  return g;
+}
+
+test("a board with final jeopardy on pauses at the round end instead of ending", () => {
+  const g = atFinal();
+  assert.equal(g.phase, PHASE.ROUND_END);
+});
+
+test("a board with final jeopardy off still ends the game outright", () => {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  setBoard(g, { ...finalBoard(), options: { doubleRound: false, finalRound: false } });
+  startGame(g, { random: LAST_CLUE });
+  playWholeBoard(g);
+  assert.equal(g.phase, PHASE.DONE);
+});
+
+test("starting final jeopardy opens the betting", () => {
+  const g = atFinal();
+  const res = startFinal(g);
+  assert.equal(res.ok, true);
+  assert.equal(g.phase, PHASE.FINAL_WAGER);
+});
+
+test("a player bets anywhere from nothing to their whole score", () => {
+  const g = atFinal();
+  startFinal(g);
+  assert.equal(finalMaxWager(g, "p1"), 1000);
+  assert.equal(setFinalWager(g, "p1", 0).ok, true);
+  assert.equal(setFinalWager(g, "p1", 1000).ok, true);
+});
+
+test("a bet above the player's own score is refused", () => {
+  const g = atFinal();
+  startFinal(g);
+  const res = setFinalWager(g, "p2", 500);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "out-of-range");
+});
+
+test("a bet that is not a whole hundred is refused", () => {
+  const g = atFinal();
+  startFinal(g);
+  assert.equal(setFinalWager(g, "p1", 250).reason, "bad-increment");
+});
+
+test("a player on nothing is in the round at a forced zero", () => {
+  const g = atFinal();
+  adjustScore(g, "p2", -400); // Bo is on zero.
+  startFinal(g);
+
+  assert.equal(finalMaxWager(g, "p2"), 0);
+  // Set for them, so the room is not waiting on a bet they cannot place.
+  assert.equal(g.finalRound.wagers["p2"], 0);
+  assert.equal(setFinalWager(g, "p2", 100).reason, "out-of-range");
+});
+
+test("a player in the red is also forced to zero rather than excluded", () => {
+  const g = atFinal();
+  adjustScore(g, "p2", -900); // Bo is on -500.
+  startFinal(g);
+  assert.equal(finalMaxWager(g, "p2"), 0);
+  assert.equal(g.finalRound.wagers["p2"], 0);
+});
+
+test("the betting is done once everyone who can bet has", () => {
+  const g = atFinal();
+  startFinal(g);
+  assert.equal(allFinalWagersIn(g), false);
+  setFinalWager(g, "p1", 300);
+  assert.equal(allFinalWagersIn(g), false);
+  setFinalWager(g, "p2", 200);
+  assert.equal(allFinalWagersIn(g), true);
+});
+
+test("someone who joins after the betting started does not hold up the room", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  setFinalWager(g, "p2", 200);
+
+  addPlayer(g, { id: "p3", name: "Cal" });
+  assert.equal(allFinalWagersIn(g), true, "a latecomer must not block the round");
+  assert.equal(setFinalWager(g, "p3", 100).reason, "not-playing-final");
+});
+
+test("the final clue is withheld from players until every bet is in", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.clue, null, "a player could bet knowing the clue");
+  assert.equal(publicState(g, { forHost: true }).final.clue, "The final clue");
+});
+
+test("a player sees their own bet and nobody else's", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  setFinalWager(g, "p2", 200);
+
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.myWager, 300);
+  assert.ok(
+    !JSON.stringify(view.final).includes("200"),
+    "another player's bet leaked into the player view",
+  );
+});
+
+/** Everyone has bet; the clue is about to go up. */
+function atFinalClue(now = 1_000_000) {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  setFinalWager(g, "p2", 200);
+  revealFinalClue(g, now);
+  return g;
+}
+
+test("the clue cannot go up until every bet is in", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 300);
+  const res = revealFinalClue(g, 1_000_000);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "bets-outstanding");
+});
+
+test("showing the clue starts a thirty second clock", () => {
+  const g = atFinalClue(1_000_000);
+  assert.equal(g.phase, PHASE.FINAL_CLUE);
+  assert.equal(g.finalRound.deadline, 1_000_000 + FINAL_ANSWER_SECONDS * 1000);
+});
+
+test("players can read the clue once the clock is running", () => {
+  const g = atFinalClue();
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.clue, "The final clue");
+  assert.equal(view.final.answer, null, "the answer must never reach a phone early");
+});
+
+test("an answer submitted before the deadline is kept", () => {
+  const g = atFinalClue(1_000_000);
+  const res = submitFinalAnswer(g, "p1", "  what is a goose  ", 1_000_100);
+  assert.equal(res.ok, true);
+  assert.equal(g.finalRound.answers["p1"], "what is a goose");
+});
+
+test("an answer submitted after the deadline is refused", () => {
+  const g = atFinalClue(1_000_000);
+  const late = 1_000_000 + FINAL_ANSWER_SECONDS * 1000 + 1;
+  const res = submitFinalAnswer(g, "p1", "too slow", late);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "too-late");
+  assert.equal(g.finalRound.answers["p1"], undefined);
+});
+
+test("an answer landing on the deadline itself still counts", () => {
+  const g = atFinalClue(1_000_000);
+  const exact = 1_000_000 + FINAL_ANSWER_SECONDS * 1000;
+  assert.equal(submitFinalAnswer(g, "p1", "just in time", exact).ok, true);
+});
+
+test("a long answer is cut rather than refused", () => {
+  const g = atFinalClue();
+  submitFinalAnswer(g, "p1", "x".repeat(500), 1_000_100);
+  assert.equal(g.finalRound.answers["p1"].length, FINAL_ANSWER_MAX);
+});
+
+test("closing the window stops further answers", () => {
+  const g = atFinalClue(1_000_000);
+  closeFinalAnswers(g);
+  const res = submitFinalAnswer(g, "p2", "after the bell", 1_000_200);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "wrong-phase");
+});
+
+test("closing twice is harmless", () => {
+  const g = atFinalClue(1_000_000);
+  // The host ends it early and the timer fires afterwards anyway.
+  assert.equal(closeFinalAnswers(g).ok, true);
+  const second = closeFinalAnswers(g);
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, "wrong-phase");
+  assert.equal(g.phase, PHASE.FINAL_REVEAL, "a late timer must not undo the close");
+});
+
+test("a player sees their own answer and nobody else's", () => {
+  const g = atFinalClue();
+  submitFinalAnswer(g, "p1", "mine", 1_000_100);
+  submitFinalAnswer(g, "p2", "theirs", 1_000_100);
+
+  const view = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(view.final.myAnswer, "mine");
+  assert.ok(
+    !JSON.stringify(view.final).includes("theirs"),
+    "another player's answer leaked into the player view",
+  );
+});
+
+/** Everyone has answered and the window has shut. */
+function atFinalReveal() {
+  const g = atFinalClue(1_000_000);
+  submitFinalAnswer(g, "p1", "Ann's answer", 1_000_100);
+  submitFinalAnswer(g, "p2", "Bo's answer", 1_000_100);
+  closeFinalAnswers(g);
+  return g;
+}
+
+test("the reveal runs poorest first", () => {
+  const g = atFinalReveal(); // Ann 1000, Bo 400
+  assert.deepEqual(g.finalRound.order, ["p2", "p1"]);
+  assert.equal(g.phase, PHASE.FINAL_REVEAL);
+});
+
+test("players level on score are revealed in the order they joined", () => {
+  const g = atFinal();
+  adjustScore(g, "p2", 600); // Both on 1000.
+  startFinal(g);
+  setFinalWager(g, "p1", 100);
+  setFinalWager(g, "p2", 100);
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+  assert.deepEqual(g.finalRound.order, ["p1", "p2"], "a tie must not be left to chance");
+});
+
+test("a correct final answer pays the player's own bet", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, true); // Bo first, bet 200
+  assert.equal(g.players.find((p) => p.id === "p2").score, 600);
+});
+
+test("a wrong final answer takes the player's own bet", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, false);
+  assert.equal(g.players.find((p) => p.id === "p2").score, 200);
+});
+
+test("final jeopardy never takes anyone below nothing", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 1000); // Ann stakes the lot.
+  setFinalWager(g, "p2", 400); // Bo stakes the lot.
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+  judgeFinal(g, false);
+  judgeFinal(g, false);
+
+  for (const p of g.players) assert.ok(p.score >= 0, `${p.name} went to ${p.score}`);
+});
+
+test("ruling on the last player ends the game", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, true);
+  assert.equal(g.phase, PHASE.FINAL_REVEAL);
+  judgeFinal(g, true);
+  assert.equal(g.phase, PHASE.DONE);
+});
+
+test("ruling past the last player is refused", () => {
+  const g = atFinalReveal();
+  judgeFinal(g, true);
+  judgeFinal(g, true);
+  const res = judgeFinal(g, true);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "wrong-phase");
+});
+
+test("a whole room on nothing still finishes the game", () => {
+  const g = atFinal();
+  adjustScore(g, "p1", -1000);
+  adjustScore(g, "p2", -400); // Both on zero.
+  startFinal(g);
+  assert.equal(allFinalWagersIn(g), true, "nobody can bet, so nobody is waited on");
+
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+  judgeFinal(g, true);
+  judgeFinal(g, false);
+
+  assert.equal(g.phase, PHASE.DONE);
+  for (const p of g.players) assert.equal(p.score, 0, "a zero bet cannot move a score");
+});
+
+test("an unsubmitted answer is revealed as blank and scores either way", () => {
+  const g = atFinalClue(1_000_000);
+  submitFinalAnswer(g, "p1", "only Ann answered", 1_000_100);
+  closeFinalAnswers(g);
+
+  const view = publicState(g, { forHost: true });
+  const bo = view.final.revealed.find((r) => r.playerId === "p2");
+  assert.equal(bo, undefined, "nobody is revealed until the host turns them over");
+  judgeFinal(g, false); // Bo first, blank answer, bet 200
+  assert.equal(g.players.find((p) => p.id === "p2").score, 200);
+});
+
+test("only players already turned over appear in the player view", () => {
+  const g = atFinalReveal();
+  const before = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(before.final.revealed.length, 0);
+  assert.ok(
+    !JSON.stringify(before.final).includes("Bo's answer"),
+    "an unrevealed answer leaked into the player view",
+  );
+
+  judgeFinal(g, true);
+  const after = publicState(g, { forHost: false, playerId: "p1" });
+  assert.equal(after.final.revealed.length, 1);
+  assert.equal(after.final.revealed[0].answer, "Bo's answer");
+  assert.equal(after.final.revealed[0].wager, 200);
+});
+
+test("someone who left before the final does not hold the round up forever", () => {
+  // They keep their score on the scoreboard, as they always have, but the
+  // room cannot sit waiting for a bet from a phone that has gone home.
+  const g = atFinal();
+  setConnectedFalse(g, "p2");
+  startFinal(g);
+
+  assert.equal(g.finalRound.wagers["p2"], 0, "a departed player is entered at $0");
+  setFinalWager(g, "p1", 300);
+  assert.equal(allFinalWagersIn(g), true, "the round must not block on someone who left");
+  assert.equal(revealFinalClue(g, 1_000_000).ok, true);
+});
+
+test("someone who left and comes back during the betting can still bet", () => {
+  const g = atFinal();
+  setConnectedFalse(g, "p2");
+  startFinal(g);
+  addPlayer(g, { id: "p2", name: "Bo" }); // their phone reconnects
+
+  assert.equal(setFinalWager(g, "p2", 400).ok, true);
+  assert.equal(g.finalRound.wagers["p2"], 400);
+});
+
+test("final jeopardy cannot take a player below nothing even after a score correction", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 1000); // Ann stakes her whole $1000.
+  setFinalWager(g, "p2", 0);
+  revealFinalClue(g, 1_000_000);
+  closeFinalAnswers(g);
+
+  // The host corrects an earlier mis-ruling after the bet was locked in.
+  adjustScore(g, "p1", -500);
+  judgeFinal(g, true); // Bo, $0
+  judgeFinal(g, false); // Ann, wrong, staked 1000 but only holds 500
+
+  assert.ok(
+    g.players.find((p) => p.id === "p1").score >= 0,
+    "the last bet of the night must never leave anyone in the red",
+  );
+});
+
+test("a player id that collides with Object's own keys is handled as data", () => {
+  // Player ids arrive from the client, so one can be "toString" or
+  // "constructor". A plain {} would report those as already present and the
+  // round would advance without their bet.
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "toString", name: "Ann" });
+  addPlayer(g, { id: "constructor", name: "Bo" });
+  setBoard(g, finalBoard());
+  startGame(g, { random: LAST_CLUE });
+  adjustScore(g, "toString", 500);
+  adjustScore(g, "constructor", 500);
+  playWholeBoard(g);
+  startFinal(g);
+
+  assert.equal(allFinalWagersIn(g), false, "nobody has bet yet");
+  setFinalWager(g, "toString", 100);
+  assert.equal(allFinalWagersIn(g), false, "one of the two has bet");
+  setFinalWager(g, "constructor", 200);
+  assert.equal(allFinalWagersIn(g), true);
+
+  revealFinalClue(g, 1_000_000);
+  submitFinalAnswer(g, "toString", "mine", 1_000_100);
+  const view = publicState(g, { forHost: false, playerId: "toString" });
+  assert.equal(view.final.myWager, 100);
+  assert.equal(view.final.myAnswer, "mine");
+});
+
+test("nothing of another player's leaks into any final phase payload", () => {
+  // A sweep across every phase of the round.
+  //
+  // Bets are checked structurally rather than by string match: every bet is a
+  // round hundred, so it collides with scores and board values, which are
+  // public. What must never appear is the raw wagers/answers maps or another
+  // player's entry in `revealed`. Text secrets are distinctive, so those are
+  // matched directly.
+  const g = atFinal();
+  startFinal(g);
+
+  const forAnn = () => publicState(g, { forHost: false, playerId: "p1" }).final;
+  const noMaps = (f, when) => {
+    assert.equal(f.wagers, undefined, `the wagers map was serialized ${when}`);
+    assert.equal(f.answers, undefined, `the answers map was serialized ${when}`);
+    assert.equal(f.current, null, `the face-up card reached a phone ${when}`);
+  };
+
+  setFinalWager(g, "p2", 400);
+  let f = forAnn();
+  noMaps(f, "during betting");
+  assert.equal(f.myWager, null, "Ann has not bet yet");
+  assert.equal(f.clue, null, "the clue leaked during betting");
+
+  setFinalWager(g, "p1", 300);
+  revealFinalClue(g, 1_000_000);
+  submitFinalAnswer(g, "p2", "Bo's secret", 1_000_100);
+  f = forAnn();
+  noMaps(f, "while answering");
+  assert.equal(f.myWager, 300, "Ann should see her own bet");
+  assert.ok(!JSON.stringify(f).includes("Bo's secret"), "an answer leaked while answering");
+  assert.equal(f.answer, null, "the authored answer reached a phone");
+
+  closeFinalAnswers(g);
+  f = forAnn();
+  noMaps(f, "before the reveal");
+  assert.equal(f.revealed.length, 0, "someone was revealed before being turned over");
+  assert.ok(!JSON.stringify(f).includes("Bo's secret"), "an answer leaked before the reveal");
+  assert.equal(f.answer, null, "the authored answer reached a phone");
 });

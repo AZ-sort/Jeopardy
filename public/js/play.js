@@ -71,6 +71,9 @@ function join(code, name) {
         return;
       }
       if (msg.type === "state") {
+        // Measured against the server once, so a phone with a wrong clock
+        // still counts a Final Jeopardy deadline down correctly.
+        if (typeof msg.now === "number") clockSkew = msg.now - Date.now();
         state = msg.state;
         render();
         return;
@@ -83,6 +86,11 @@ function join(code, name) {
       }
       if (msg.type === "wager-rejected") {
         wagerSent = false;
+        toast(msg.message);
+        render();
+        return;
+      }
+      if (msg.type === "answer-rejected") {
         toast(msg.message);
         render();
       }
@@ -124,17 +132,33 @@ document.addEventListener("keydown", (e) => {
 const wagerPad = el("p-wager");
 
 /** Bets move in whole hundreds, so the pad is two buttons rather than a keypad. */
+/** A Daily Double starts at $100; Final Jeopardy lets you bet nothing. */
+function wagerFloor() {
+  return state?.phase === "final-wager" ? 0 : (state?.wagerStep ?? 100);
+}
+
+/** The ceiling differs too: own score for the final, board high for a double. */
+function wagerCeiling() {
+  if (state?.phase === "final-wager") return state.final?.myMax ?? 0;
+  return state?.wagerMax ?? state?.wagerStep ?? 100;
+}
+
 function stepWager(by) {
   const step = state?.wagerStep ?? 100;
-  const max = state?.wagerMax ?? step;
-  wagerAmount = Math.min(Math.max((wagerAmount ?? step) + by * step, step), max);
+  const floor = wagerFloor();
+  const max = wagerCeiling();
+  wagerAmount = Math.min(Math.max((wagerAmount ?? floor) + by * step, floor), max);
   renderWager();
 }
 
 function sendWager() {
   if (wagerSent || wagerAmount == null) return;
   wagerSent = true;
-  socket.send({ type: "setWager", amount: wagerAmount });
+  socket.send(
+    state?.phase === "final-wager"
+      ? { type: "setFinalWager", amount: wagerAmount }
+      : { type: "setWager", amount: wagerAmount },
+  );
 }
 
 el("p-wager-down").addEventListener("click", () => stepWager(-1));
@@ -142,12 +166,107 @@ el("p-wager-up").addEventListener("click", () => stepWager(1));
 el("p-wager-go").addEventListener("click", sendWager);
 
 function renderWager() {
-  const step = state?.wagerStep ?? 100;
-  const max = state?.wagerMax ?? step;
-  el("p-wager-amount").textContent = "$" + (wagerAmount ?? step);
-  el("p-wager-limit").textContent = `Anything from $${step} to $${max}, in hundreds.`;
-  el("p-wager-down").disabled = (wagerAmount ?? step) <= step;
-  el("p-wager-up").disabled = (wagerAmount ?? step) >= max;
+  const floor = wagerFloor();
+  const max = wagerCeiling();
+  const shown = wagerAmount ?? floor;
+
+  el("p-wager-amount").textContent = "$" + shown;
+  el("p-wager-limit").textContent = `Anything from $${floor} to $${max}, in hundreds.`;
+  el("p-wager-down").disabled = shown <= floor;
+  el("p-wager-up").disabled = shown >= max;
+}
+
+// ------------------------------------------------------------ final jeopardy
+
+const FINAL_PHASES = ["final-wager", "final-clue", "final-reveal"];
+
+let clockTimer = null;
+/** Offset between this phone's clock and the server's, measured once. */
+let clockSkew = 0;
+
+function startClock(deadline) {
+  if (clockTimer || !deadline) return;
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((deadline - (Date.now() + clockSkew)) / 1000));
+    el("p-clock").textContent = left + "s";
+    if (left === 0) stopClock();
+  };
+  tick();
+  clockTimer = setInterval(tick, 250);
+}
+
+function stopClock() {
+  clearInterval(clockTimer);
+  clockTimer = null;
+}
+
+el("p-answer-go").addEventListener("click", () => {
+  const text = el("p-answer").value.trim();
+  // An empty submission used to lock the box shut with the whole bet riding on
+  // it: the server stored "", which is not null, so the input hid and there was
+  // no way back. Nothing is sent until there is something to send.
+  if (!text) return toast("Write something first.");
+  socket.send({ type: "submitFinalAnswer", answer: text });
+});
+
+/** The phone's view of Final Jeopardy. Returns true when it owns the screen. */
+function renderFinal() {
+  const phase = state.phase;
+  const f = state.final;
+  const onFinal = FINAL_PHASES.includes(phase) && f;
+  el("p-final").hidden = !onFinal;
+  el("p-final-rest").hidden = !onFinal;
+  document.querySelector(".play__main").classList.toggle("play__main--final", Boolean(onFinal));
+  // The pad is shared with the Daily Double; during the final the heading
+  // above it already says which round this is.
+  el("p-wager-title").hidden = onFinal;
+  if (!onFinal) {
+    stopClock();
+    return false;
+  }
+
+  const betting = phase === "final-wager";
+  const mine = f.playing.includes(myId);
+  const alreadyBet = f.myWager !== null;
+
+  // The pad is the Daily Double pad, at a $0 floor.
+  wagerPad.hidden = !(betting && mine && !alreadyBet);
+  buzzer.hidden = true;
+  // Stays open for the whole window, not just until the first submit: the
+  // rules accept a correction right up to the deadline, so the UI should too.
+  el("p-final-answer").hidden = !(phase === "final-clue" && mine);
+  el("p-clock").hidden = phase !== "final-clue";
+  el("p-clue").textContent = f.clue ?? "";
+
+  if (betting) {
+    stopClock();
+    el("p-final-note").textContent = !mine
+      ? "You joined after the betting started — sit this one out."
+      : alreadyBet
+        ? `You bet $${f.myWager}. Waiting for everyone else.`
+        : f.myMax === 0
+          ? "You have nothing to bet, so you are in at $0."
+          : "";
+    if (mine && !alreadyBet) {
+      // Clamp rather than default: a leftover amount from a Daily Double
+      // earlier in the game would otherwise show a bet this player cannot make.
+      wagerAmount = Math.min(Math.max(wagerAmount ?? 0, 0), f.myMax ?? 0);
+      renderWager();
+    }
+  } else if (phase === "final-clue") {
+    el("p-final-note").textContent = !mine
+      ? "You joined after the betting started — sit this one out."
+      : f.myAnswer !== null
+        ? `Locked in: ${f.myAnswer} — you can change it until time is up.`
+        : "";
+    startClock(f.deadline);
+  } else {
+    stopClock();
+    el("p-final-note").textContent = mine
+      ? "Answers are going up on the big screen."
+      : "Final Jeopardy is being revealed on the big screen.";
+  }
+  return true;
 }
 
 // ------------------------------------------------------------------ rendering
@@ -165,6 +284,13 @@ function render() {
   if (me) {
     el("p-name").textContent = me.name;
     el("p-score").textContent = (me.score < 0 ? "−$" : "$") + Math.abs(me.score);
+  }
+
+  // Final Jeopardy owns the whole screen when it is on; the buzzer and clue
+  // block below would otherwise fight it over the same elements.
+  if (renderFinal()) {
+    meta.textContent = "";
+    return;
   }
 
   const clue = state.activeClue;

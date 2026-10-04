@@ -143,6 +143,15 @@ function buildSetup() {
       slots.append(add);
     }
   }
+  el("s-final").checked = Boolean(draft.options?.finalRound);
+  el("finalbox").hidden = !draft.options?.finalRound;
+  if (draft.options?.finalRound) {
+    if (!draft.final) draft.final = { category: "", clue: "", answer: "" };
+    el("f-cat").value = draft.final.category;
+    el("f-clue").value = draft.final.clue;
+    el("f-ans").value = draft.final.answer;
+  }
+
   setupBuilt = true;
   // Account state decides whether the board list can be populated at all, so
   // it is fetched first rather than loading a list we may not be allowed.
@@ -156,6 +165,24 @@ el("s-double").addEventListener("change", (e) => {
   // draft either way, so toggling off and on again loses nothing.
   buildSetup();
 });
+
+el("s-final").addEventListener("change", (e) => {
+  draft.options.finalRound = e.target.checked;
+  queueDraftSave();
+  buildSetup();
+});
+
+for (const [id, key] of [
+  ["f-cat", "category"],
+  ["f-clue", "clue"],
+  ["f-ans", "answer"],
+]) {
+  el(id).addEventListener("input", (e) => {
+    if (!draft.final) draft.final = { category: "", clue: "", answer: "" };
+    draft.final[key] = e.target.value;
+    queueDraftSave();
+  });
+}
 
 /** Resizes a textarea to fit its content. */
 function autoGrow(box) {
@@ -516,6 +543,7 @@ function render(state) {
   renderScores(state);
   renderClue(state);
   renderRoundEnd(state);
+  renderFinal(state);
 }
 
 function renderLobby(state) {
@@ -718,7 +746,11 @@ function renderRoundEnd(state) {
   if (!atRoundEnd) return;
 
   el("re-done").textContent = `End of round ${state.round}.`;
-  el("re-next").textContent = `Start round ${state.round + 1}`;
+  // What comes next decides the button: another board, or the final.
+  const moreBoards = state.round < state.rounds;
+  el("re-next").hidden = !moreBoards;
+  el("re-final").hidden = moreBoards;
+  if (moreBoards) el("re-next").textContent = `Start round ${state.round + 1}`;
 
   const scores = el("re-scores");
   scores.textContent = "";
@@ -735,6 +767,55 @@ function renderRoundEnd(state) {
 }
 
 el("re-next").addEventListener("click", () => socket.send({ type: "startNextRound" }));
+
+// ------------------------------------------------------------------ final jeopardy
+
+const FINAL_PHASES = ["final-wager", "final-clue", "final-reveal"];
+
+/** The host's view of Final Jeopardy, across all three of its phases. */
+function renderFinal(state) {
+  const on = FINAL_PHASES.includes(state.phase);
+  el("final").hidden = !on;
+  if (!on) return;
+
+  const f = state.final;
+  el("fj-cat").textContent = f.category;
+  // Blank while the room is still betting. The host screen is the one cast to
+  // the TV, so showing the clue here hands it to everyone choosing a bet —
+  // exactly what withholding it from the phones is for. Same reasoning as the
+  // Daily Double, which blanks `c-text` during its wager.
+  el("fj-clue").textContent = state.phase === "final-wager" ? "" : (f.clue ?? "");
+
+  const waiting = f.waitingOn
+    .map((id) => state.players.find((p) => p.id === id)?.name ?? "?")
+    .join(", ");
+
+  el("fj-show").hidden = state.phase !== "final-wager" || f.waitingOn.length > 0;
+  el("fj-stop").hidden = state.phase !== "final-clue";
+  el("fj-yes").hidden = state.phase !== "final-reveal";
+  el("fj-no").hidden = state.phase !== "final-reveal";
+  el("fj-reveal").hidden = state.phase !== "final-reveal" || !f.current;
+
+  if (state.phase === "final-wager") {
+    el("fj-status").textContent = waiting
+      ? `Waiting on ${waiting}.`
+      : "Everyone has bet. Show the clue when the room is ready.";
+  } else if (state.phase === "final-clue") {
+    el("fj-status").textContent = "Answering…";
+  } else if (f.current) {
+    const who = state.players.find((p) => p.id === f.current.playerId);
+    el("fj-who").textContent = who?.name ?? "?";
+    el("fj-answer").textContent = f.current.answer || "— nothing written —";
+    el("fj-bet").textContent = "Bet $" + f.current.wager;
+    el("fj-status").textContent = `${f.revealIndex + 1} of ${f.order.length}, poorest first.`;
+  }
+}
+
+el("re-final").addEventListener("click", () => socket.send({ type: "startFinal" }));
+el("fj-show").addEventListener("click", () => socket.send({ type: "revealFinalClue" }));
+el("fj-stop").addEventListener("click", () => socket.send({ type: "endFinalAnswers" }));
+el("fj-yes").addEventListener("click", () => socket.send({ type: "judgeFinal", correct: true }));
+el("fj-no").addEventListener("click", () => socket.send({ type: "judgeFinal", correct: false }));
 
 el("c-arm").addEventListener("click", () => socket.send({ type: "armBuzzers" }));
 el("c-yes").addEventListener("click", () => socket.send({ type: "judge", correct: true }));

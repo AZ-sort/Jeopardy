@@ -606,6 +606,108 @@ check(
 await playEveryClue(h3, p3, "r-1");
 check("the game ends after the last round", h3.state.phase === "done", h3.state.phase);
 
+// ---------------------------------------------------------------- final jeopardy
+
+console.log("\nFinal Jeopardy");
+const room4 = await newRoom();
+const h4 = await client(() => ({
+  type: "hello",
+  role: "host",
+  code: room4.code,
+  hostToken: room4.hostToken,
+}));
+const f1 = await client(() => ({
+  type: "hello",
+  role: "player",
+  code: room4.code,
+  playerId: "f-1",
+  name: "Fin",
+}));
+const f2 = await client(() => ({
+  type: "hello",
+  role: "player",
+  code: room4.code,
+  playerId: "f-2",
+  name: "Gus",
+}));
+await wait(150);
+
+const finalDraft = makeBoard();
+finalDraft.options.finalRound = true;
+finalDraft.final = { category: "Endings", clue: "The last clue", answer: "The last answer" };
+h4.send({ type: "saveDraft", draft: finalDraft });
+await wait(150);
+h4.send({ type: "startGame" });
+await wait(200);
+
+h4.send({ type: "adjustScore", playerId: "f-1", delta: 1000 });
+h4.send({ type: "adjustScore", playerId: "f-2", delta: 400 });
+await wait(200);
+
+await playEveryClue(h4, f1, "f-1");
+// playEveryClue loses f-1 100 on the daily double, so top the scores back up.
+h4.send({ type: "adjustScore", playerId: "f-1", delta: 1000 - h4.state.players.find((p) => p.id === "f-1").score });
+h4.send({ type: "adjustScore", playerId: "f-2", delta: 400 - h4.state.players.find((p) => p.id === "f-2").score });
+await wait(200);
+check("the board pauses for the final", h4.state.phase === "round-end", h4.state.phase);
+
+h4.send({ type: "startFinal" });
+await wait(200);
+check("betting opened", h4.state.phase === "final-wager", h4.state.phase);
+check(
+  "the clue is withheld from phones while bets are open",
+  f1.state.final.clue === null,
+  JSON.stringify(f1.state.final.clue),
+);
+
+f1.send({ type: "setFinalWager", amount: 600 });
+f2.send({ type: "setFinalWager", amount: 400 });
+await wait(300);
+check("a player sees their own bet", f1.state.final.myWager === 600, String(f1.state.final.myWager));
+check(
+  "and not another player's",
+  f1.state.final.wagers === undefined && f1.state.final.answers === undefined,
+);
+
+h4.send({ type: "revealFinalClue" });
+await wait(250);
+check("the clue is up", h4.state.phase === "final-clue", h4.state.phase);
+check("phones can read it now", f1.state.final.clue === "The last clue");
+check("a deadline came with it", typeof f1.state.final.deadline === "number");
+check("the authored answer never reaches a phone", f1.state.final.answer === null);
+
+f1.send({ type: "submitFinalAnswer", answer: "Fin's answer" });
+await wait(250);
+check(
+  "an answer is private until the reveal",
+  !JSON.stringify(f2.state.final).includes("Fin's answer"),
+);
+
+h4.send({ type: "endFinalAnswers" });
+await wait(250);
+check("the reveal started", h4.state.phase === "final-reveal", h4.state.phase);
+check("poorest first", h4.state.final.order[0] === "f-2", JSON.stringify(h4.state.final.order));
+
+// The window has shut; the rules, not the UI, must refuse a late answer.
+f1.send({ type: "submitFinalAnswer", answer: "far too late" });
+await wait(250);
+check(
+  "an answer after the window is refused",
+  !JSON.stringify(h4.state.final).includes("far too late"),
+);
+
+h4.send({ type: "judgeFinal", correct: false }); // Gus, nothing written, bet 400
+await wait(250);
+h4.send({ type: "judgeFinal", correct: true }); // Fin, bet 600
+await wait(300);
+
+const fin = h4.state.players.find((p) => p.id === "f-1");
+const gus = h4.state.players.find((p) => p.id === "f-2");
+check("the winner was paid their own bet", fin.score === 1600, String(fin.score));
+check("the loser lost their own bet", gus.score === 0, String(gus.score));
+check("nobody went below nothing", fin.score >= 0 && gus.score >= 0);
+check("the game is over", h4.state.phase === "done", h4.state.phase);
+
 console.log(
   "\n" +
     (failures.length === 0
