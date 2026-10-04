@@ -94,8 +94,8 @@ game. Reading them through takes a minute and is worth it.
    **Add category** puts one back, so a quick three-category round is a couple
    of clicks. One category is the minimum.
 2. **Tick what you are playing.** **Second round** adds a whole second board at
-   $200–$1000, authored now so nobody waits mid-game. Both boards are written
-   before you start; only the first is on screen when you do.
+   $200–$1000; **Final Jeopardy** adds one last clue. Both are written now, so
+   nobody waits mid-game — only the first board is on screen when you start.
 3. **Start the game** once people have joined. The board locks at this point.
 4. **Pick a clue.** It fills the screen. Read it out loud.
 5. **Open the buzzers** when you have finished reading. Until you do, every
@@ -106,6 +106,26 @@ game. Reading them through takes a minute and is worth it.
 7. **Start round 2**, if you are playing one. The board pauses on a scoreboard
    when the last clue closes, so you can read the scores out before the second
    board goes up. Round 2 runs $200–$1000 and hides **two** Daily Doubles.
+8. **Finish with Final Jeopardy**, if you turned it on. The same scoreboard
+   offers it once the last board is done.
+
+### Final Jeopardy
+
+Everyone bets first, in secret, from $0 up to their own score, in hundreds.
+Someone on nothing is still in the round — they simply cannot move their score.
+You will not be able to show the clue until the last bet is in, and no phone
+can see the clue before then: betting with the question in front of you is not
+Final Jeopardy.
+
+Then the clue goes up and everyone has **30 seconds** to type an answer. When
+the clock runs out the window shuts; anything not sent is not an answer, and
+that player is revealed with a blank. You can also call time early with
+**Everyone's in**. The clock only closes the window — you still choose when the
+reveal begins.
+
+Answers are turned over one at a time, **poorest first**, each with the bet
+that player staked, for you to rule Correct or Wrong. Nobody can be taken below
+$0, because nobody can stake more than they hold.
 
 Host keyboard shortcuts, since you will be looking at the room and not the
 screen: `Space` opens the buzzers, `Y` correct, `N` wrong, `Esc` back to board.
@@ -265,7 +285,12 @@ OpenRouter, covering the request shape and every failure branch without a key.
 - **Remote play needs a tunnel.** The LAN address only works on your wifi. For
   friends elsewhere, expose the port with something like
   `cloudflared tunnel --url http://localhost:3000` and share that address.
-- **Not yet built:** Final Jeopardy, a Double Jeopardy round, timers, sound.
+- **Not yet built:** sound, and any timer outside Final Jeopardy's 30 seconds.
+  The main rounds stay untimed — you open the buzzers when you have finished
+  reading.
+- **A player who joins after Final Jeopardy's betting opens sits it out.** The
+  round's line-up is fixed when the betting starts, so a latecomer cannot hold
+  up the clue. They keep their score and the scoreboard still shows them.
 - **One Daily Double in round 1, two in round 2**, as the show plays it. They
   never share a category unless the round is too short to avoid it.
 - **Fonts come from Google Fonts.** Playing fully offline falls back to system
