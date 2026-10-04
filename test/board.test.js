@@ -115,6 +115,20 @@ test("compacting never throws on a draft with the wrong types in it", () => {
   assert.equal(compactBoard(hostile).rounds[0].categories.length, 0);
 });
 
+test("final jeopardy must be complete once its toggle is on", () => {
+  const board = playableBoard({ finalRound: true });
+  board.final = { category: "Last Things", clue: "", answer: "An answer" };
+  const res = validateBoard(board);
+  assert.equal(res.ok, false);
+  assert.match(res.error, /final/i);
+});
+
+test("an unfinished final jeopardy behind an off toggle does not block the game", () => {
+  const board = playableBoard({ finalRound: false });
+  board.final = { category: "", clue: "", answer: "" };
+  assert.equal(validateBoard(board).ok, true);
+});
+
 test("a played round with every category removed is refused", () => {
   const board = playableBoard();
   board.rounds[0].categories = [];

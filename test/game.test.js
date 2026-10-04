@@ -1068,6 +1068,33 @@ test("only players already turned over appear in the player view", () => {
   assert.equal(after.final.revealed[0].wager, 200);
 });
 
+test("a player id that collides with Object's own keys is handled as data", () => {
+  // Player ids arrive from the client, so one can be "toString" or
+  // "constructor". A plain {} would report those as already present and the
+  // round would advance without their bet.
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "toString", name: "Ann" });
+  addPlayer(g, { id: "constructor", name: "Bo" });
+  setBoard(g, finalBoard());
+  startGame(g, { random: LAST_CLUE });
+  adjustScore(g, "toString", 500);
+  adjustScore(g, "constructor", 500);
+  playWholeBoard(g);
+  startFinal(g);
+
+  assert.equal(allFinalWagersIn(g), false, "nobody has bet yet");
+  setFinalWager(g, "toString", 100);
+  assert.equal(allFinalWagersIn(g), false, "one of the two has bet");
+  setFinalWager(g, "constructor", 200);
+  assert.equal(allFinalWagersIn(g), true);
+
+  revealFinalClue(g, 1_000_000);
+  submitFinalAnswer(g, "toString", "mine", 1_000_100);
+  const view = publicState(g, { forHost: false, playerId: "toString" });
+  assert.equal(view.final.myWager, 100);
+  assert.equal(view.final.myAnswer, "mine");
+});
+
 test("nothing of another player's leaks into any final phase payload", () => {
   // A sweep across every phase of the round.
   //
