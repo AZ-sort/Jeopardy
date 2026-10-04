@@ -1095,6 +1095,66 @@ textarea {
   color: var(--cream);
 }
 
+/* ---------------------------------------------------------- final jeopardy */
+
+/* A takeover like .roundend, and for the same reason: it must not render
+   below a full-height #game, where its buttons fall off a TV screen. */
+.final {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--stage);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 40px 20px;
+}
+
+.final__cat {
+  font-family: var(--display);
+  font-size: clamp(1.6rem, 4vw, 2.6rem);
+  text-transform: uppercase;
+  color: var(--brass);
+  margin: 0;
+}
+
+.final__clue {
+  font-size: clamp(1.4rem, 3.4vw, 2.6rem);
+  color: var(--cream);
+  max-width: 24ch;
+  text-align: center;
+  margin: 0;
+}
+
+.final__reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.final__who {
+  font-family: var(--display);
+  font-size: clamp(1.6rem, 4vw, 2.6rem);
+  color: var(--cream);
+  margin: 0;
+}
+
+.final__answer {
+  font-size: clamp(1.3rem, 3vw, 2.2rem);
+  color: var(--brass);
+  margin: 0;
+}
+
+.final__bet,
+.final__status {
+  color: var(--cream-dim);
+  margin: 0;
+}
+
 /* ---------------------------------------------------------- daily double */
 
 .dd-splash {
