@@ -155,7 +155,7 @@ test("the game will not start with no players", () => {
 
 // ---------------------------------------------------------------- opening a clue
 
-test("opening a clue moves to the clue phase with buzzers disarmed", () => {
+test("opening a clue moves to the clue phase with the buzzers live", () => {
   const g = twoPlayerGame();
   assert.equal(g.phase, PHASE.BOARD);
 
@@ -163,16 +163,13 @@ test("opening a clue moves to the clue phase with buzzers disarmed", () => {
   assert.equal(res.ok, true);
   assert.equal(g.phase, PHASE.CLUE);
   assert.deepEqual(g.activeClue, { c: 0, q: 2 });
-  assert.equal(
-    g.buzzersArmed,
-    false,
-    "buzzers must stay disarmed until the host finishes reading the clue",
-  );
+  assert.equal(g.buzzersArmed, true, "the buzzers open with the clue");
 });
 
-test("buzzing before the host arms the buzzers is rejected", () => {
+test("buzzing once the answer is up is rejected", () => {
   const g = twoPlayerGame();
   openClue(g, 0, 0);
+  revealAnswer(g);
   const res = buzz(g, "p1", 1000);
   assert.equal(res.ok, false);
   assert.equal(res.reason, "not-armed");
@@ -185,6 +182,7 @@ test("an already-revealed clue cannot be reopened", () => {
   armBuzzers(g);
   buzz(g, "p1", 1000);
   judge(g, true);
+  closeClue(g);
 
   const res = openClue(g, 0, 0);
   assert.equal(res.ok, false);
@@ -260,7 +258,7 @@ test("buzzing is rejected on the board phase", () => {
 
 // ---------------------------------------------------------------- judging
 
-test("a correct answer awards the clue value and closes the clue", () => {
+test("a correct answer awards the clue value and shows the answer", () => {
   const g = twoPlayerGame();
   openClue(g, 0, 2); // $300
   armBuzzers(g);
@@ -269,6 +267,8 @@ test("a correct answer awards the clue value and closes the clue", () => {
   const res = judge(g, true);
   assert.equal(res.ok, true);
   assert.equal(g.players.find((p) => p.id === "p1").score, 300);
+  assert.equal(g.answerRevealed, true);
+  closeClue(g);
   assert.equal(g.phase, PHASE.BOARD);
   assert.equal(g.board.categories[0].clues[2].revealed, true);
 });
@@ -598,6 +598,7 @@ test("a correct daily double pays the wager, not the clue value", () => {
   judge(g, true);
 
   assert.equal(g.players.find((p) => p.id === "p1").score, 300);
+  closeClue(g);
   assert.equal(g.phase, PHASE.BOARD);
 });
 
@@ -607,9 +608,11 @@ test("a wrong daily double deducts the wager and gives nobody else a shot", () =
   judge(g, false);
 
   assert.equal(g.players.find((p) => p.id === "p1").score, -300);
-  assert.equal(g.phase, PHASE.BOARD, "the clue must close, not reopen to the room");
+  assert.equal(g.buzzersArmed, false, "it must not reopen to the room");
+  assert.equal(g.answerRevealed, true);
+  closeClue(g);
+  assert.equal(g.phase, PHASE.BOARD);
   assert.equal(g.activeClue, null);
-  assert.equal(g.buzzersArmed, false);
   assert.equal(g.board.categories[0].clues[0].revealed, true);
 });
 
@@ -617,6 +620,7 @@ test("closing a daily double clears the wagering player", () => {
   const g = dailyDoubleGame();
   setWager(g, "p1", 300);
   judge(g, true);
+  closeClue(g);
   assert.equal(g.wagerPlayer, null);
 });
 
@@ -716,6 +720,78 @@ test("the player view says which round is being played", () => {
   const view = publicState(g, { forHost: false });
   assert.equal(view.round, 1);
   assert.equal(view.rounds, 2);
+});
+
+// ------------------------------------------------- answers always get shown
+
+test("opening a clue opens the buzzers straight away", () => {
+  const g = twoPlayerGame();
+  openClue(g, 0, 0);
+  assert.equal(g.phase, PHASE.CLUE);
+  assert.equal(g.buzzersArmed, true, "players should not wait on a second press");
+  assert.equal(buzz(g, "p1").ok, true);
+});
+
+test("a correct answer shows the answer and leaves the clue up", () => {
+  const g = twoPlayerGame();
+  openClue(g, 0, 0);
+  buzz(g, "p1");
+  judge(g, true);
+
+  assert.equal(g.players.find((p) => p.id === "p1").score, 100);
+  assert.equal(g.answerRevealed, true, "the room should see what it was");
+  assert.equal(g.phase, PHASE.CLUE, "the host closes it, not the verdict");
+  assert.equal(g.buzzersArmed, false);
+  assert.equal(publicState(g, { forHost: false }).activeClue.answer, "Alpha answer for $100");
+});
+
+test("the host closing the clue is what returns to the board", () => {
+  const g = twoPlayerGame();
+  openClue(g, 0, 0);
+  buzz(g, "p1");
+  judge(g, true);
+  closeClue(g);
+  assert.equal(g.phase, PHASE.BOARD);
+  assert.equal(g.board.categories[0].clues[0].revealed, true);
+});
+
+test("a wrong answer still re-opens the buzzers for everyone else", () => {
+  const g = twoPlayerGame();
+  openClue(g, 0, 0);
+  buzz(g, "p1");
+  judge(g, false);
+
+  assert.equal(g.buzzersArmed, true);
+  assert.equal(g.answerRevealed, false, "it is still live, so no answer yet");
+  assert.equal(buzz(g, "p2").ok, true);
+});
+
+test("once everyone has missed it the answer appears by itself", () => {
+  const g = twoPlayerGame();
+  openClue(g, 0, 0);
+  buzz(g, "p1");
+  judge(g, false);
+  buzz(g, "p2");
+  judge(g, false);
+
+  assert.equal(g.answerRevealed, true, "nobody is left, so stop sitting in silence");
+  assert.equal(g.buzzersArmed, false);
+  assert.equal(g.phase, PHASE.CLUE);
+  assert.equal(publicState(g, { forHost: false }).activeClue.answer, "Alpha answer for $100");
+});
+
+test("a daily double shows its answer too, either way", () => {
+  const right = dailyDoubleGame();
+  setWager(right, "p1", 300);
+  judge(right, true);
+  assert.equal(right.answerRevealed, true);
+  assert.equal(right.phase, PHASE.CLUE);
+
+  const wrong = dailyDoubleGame();
+  setWager(wrong, "p1", 300);
+  judge(wrong, false);
+  assert.equal(wrong.answerRevealed, true);
+  assert.equal(wrong.phase, PHASE.CLUE, "nobody else can buzz, but the room still sees it");
 });
 
 // ---------------------------------------------------------------- per-player views

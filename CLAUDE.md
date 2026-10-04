@@ -130,6 +130,18 @@ Two things here are load-bearing and easy to undo by accident:
 The wager ceiling comes from the board's own highest value, not a hardcoded
 500, so a second 200–1000 board will work without touching it.
 
+## How a clue begins and ends
+
+Two rules that came out of play-testing and are easy to undo by accident:
+
+- **The buzzers open with the clue** (`openClue`), not on a host press. A
+  Daily Double is the exception — it belongs to one player, found first.
+- **Every clue ends with its answer on screen** (`settleClue`). Correct, or
+  the last eligible player wrong, both land there; the clue stays up and the
+  host closes it. `judge` no longer returns to the board by itself, so
+  anything driving a game — the smoke test especially — must send `closeClue`
+  after a verdict.
+
 ## Final Jeopardy
 
 Three phases after the last board: `final-wager`, `final-clue`, `final-reveal`.

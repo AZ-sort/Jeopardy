@@ -130,7 +130,9 @@
           </button>
           <span class="peek__text" id="c-peektext" hidden></span>
         </span>
-        <button class="btn btn--go" id="c-arm">Open the buzzers</button>
+        <!-- The buzzers open with the clue, so there is nothing to press.
+             Kept as a hidden manual re-open behind the Space shortcut. -->
+        <button class="btn btn--go" id="c-arm" hidden>Re-open the buzzers</button>
         <button class="btn btn--yes" id="c-yes" hidden>Correct</button>
         <button class="btn btn--no" id="c-no" hidden>Wrong</button>
         <button class="btn btn--quiet" id="c-reveal">Show answer to all</button>
@@ -160,6 +162,12 @@
         <button class="btn btn--yes" id="fj-yes" hidden>Correct</button>
         <button class="btn btn--no" id="fj-no" hidden>Wrong</button>
       </div>
+    </div>
+
+    <div class="roundend" id="gameover" hidden>
+      <p class="roundend__done">That's the game</p>
+      <p class="gameover__winner" id="go-winner"></p>
+      <div class="roundend__scores" id="go-scores"></div>
     </div>
 
     <script type="module" src="/js/host.js"></script>

@@ -97,12 +97,16 @@ game. Reading them through takes a minute and is worth it.
    $200–$1000; **Final Jeopardy** adds one last clue. Both are written now, so
    nobody waits mid-game — only the first board is on screen when you start.
 3. **Start the game** once people have joined. The board locks at this point.
-4. **Pick a clue.** It fills the screen. Read it out loud.
-5. **Open the buzzers** when you have finished reading. Until you do, every
-   phone says *Wait* — this is what stops people mashing the button early.
-6. **Rule on it.** Whoever buzzed first appears on screen. Correct adds the
-   value; Wrong subtracts it, locks that player out of this clue, and re-opens
-   the buzzers for everyone else.
+4. **Pick a clue.** It fills the screen and the buzzers go live immediately —
+   there is nothing to press. Read it out loud; the quick ones may buzz before
+   you have finished, which is part of the fun.
+5. **Rule on it.** Whoever buzzed first appears on screen. Correct adds the
+   value; Wrong subtracts it, locks that player out, and re-opens the buzzers
+   for everyone else.
+6. **The answer always goes up.** As soon as somebody gets it right — or
+   everybody has got it wrong — the answer appears and the clue stays on
+   screen until you press *Back to board*. No clue disappears without the room
+   finding out what it was.
 7. **Start round 2**, if you are playing one. The board pauses on a scoreboard
    when the last clue closes, so you can read the scores out before the second
    board goes up. Round 2 runs $200–$1000 and hides **two** Daily Doubles.
@@ -128,7 +132,10 @@ that player staked, for you to rule Correct or Wrong. Nobody can be taken below
 $0, because nobody can stake more than they hold.
 
 Host keyboard shortcuts, since you will be looking at the room and not the
-screen: `Space` opens the buzzers, `Y` correct, `N` wrong, `Esc` back to board.
+screen: `Y` correct, `N` wrong, `Esc` back to board. `Space` re-opens the
+buzzers, which you should not normally need — they open with the clue.
+
+When the last clue closes the host screen shows the final scores and who won.
 
 ### The Daily Double
 
