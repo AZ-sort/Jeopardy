@@ -73,7 +73,13 @@ function join(code, name) {
       if (msg.type === "state") {
         // Measured against the server once, so a phone with a wrong clock
         // still counts a Final Jeopardy deadline down correctly.
-        if (typeof msg.now === "number") clockSkew = msg.now - Date.now();
+        // Measured once, as the comment below says. Re-measuring on every
+        // broadcast folded that message's latency into the offset, so the
+        // countdown could tick sideways by a second when the network hiccuped.
+        if (typeof msg.now === "number" && !skewMeasured) {
+          clockSkew = msg.now - Date.now();
+          skewMeasured = true;
+        }
         state = msg.state;
         render();
         return;
@@ -183,13 +189,19 @@ const FINAL_PHASES = ["final-wager", "final-clue", "final-reveal"];
 let clockTimer = null;
 /** Offset between this phone's clock and the server's, measured once. */
 let clockSkew = 0;
+let skewMeasured = false;
 
 function startClock(deadline) {
   if (clockTimer || !deadline) return;
   const tick = () => {
     const left = Math.max(0, Math.ceil((deadline - (Date.now() + clockSkew)) / 1000));
     el("p-clock").textContent = left + "s";
-    if (left === 0) stopClock();
+    if (left === 0) {
+      // Shut the box on the phone the moment the clock reads zero, rather than
+      // leaving it open and inviting a submission the rules will refuse.
+      el("p-final-answer").hidden = true;
+      stopClock();
+    }
   };
   tick();
   clockTimer = setInterval(tick, 250);

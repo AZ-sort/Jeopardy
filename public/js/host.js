@@ -1,8 +1,8 @@
 import { connect, postJson, toast, fatal } from "./net.js";
 
 // Mirrors lib/board.js. The browser cannot import that module — it pulls in
-// zod and there is no build step — so the two copies are kept in step by hand,
-// and the smoke test asserts round 2's values over the wire.
+// zod and there is no build step — so the two copies are kept in step by hand.
+// `test/constants.test.js` reads this file and fails if they drift apart.
 const ROUND_VALUES = [
   [100, 200, 300, 400, 500],
   [200, 400, 600, 800, 1000],
@@ -557,8 +557,11 @@ function renderLobby(state) {
 function renderBoard(state) {
   const board = el("board");
   const cats = state.board?.categories ?? [];
+  // Rows come from the board in play, not from round 1's values. Both rounds
+  // are five deep today; hardcoding that breaks silently the day one is not.
+  const rows = cats[0]?.clues.length ?? CLUE_VALUES.length;
   board.style.gridTemplateColumns = "repeat(" + cats.length + ", minmax(0, 1fr))";
-  board.style.gridTemplateRows = "auto repeat(" + CLUE_VALUES.length + ", minmax(0, 1fr))";
+  board.style.gridTemplateRows = "auto repeat(" + rows + ", minmax(0, 1fr))";
   board.textContent = "";
 
   for (const cat of cats) {
@@ -569,7 +572,7 @@ function renderBoard(state) {
   }
 
   // Grid fills row by row, so iterate clue index in the outer loop.
-  for (let q = 0; q < CLUE_VALUES.length; q++) {
+  for (let q = 0; q < rows; q++) {
     for (let c = 0; c < cats.length; c++) {
       const clue = cats[c].clues[q];
       const cell = document.createElement("button");

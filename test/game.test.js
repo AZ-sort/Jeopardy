@@ -722,6 +722,60 @@ test("the player view says which round is being played", () => {
   assert.equal(view.rounds, 2);
 });
 
+// ---------------------------------------------------------------- hardening
+
+test("a round starts fresh even if its board arrived marked played", () => {
+  // Not reachable from the host UI, but a board that arrived with squares
+  // already revealed used to leave the round unplayable and unfinishable.
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  const board = wrapped({ doubleRound: true });
+  board.rounds[1].categories[0].clues[0].revealed = true;
+  setBoard(g, board);
+  startGame(g, { random: LAST_CLUE });
+  playWholeBoard(g);
+  startNextRound(g, { random: LAST_CLUE });
+
+  assert.equal(
+    g.board.categories[0].clues[0].revealed,
+    false,
+    "round 2 must open with every square in play",
+  );
+});
+
+test("final jeopardy cannot be started while a board is still unplayed", () => {
+  const g = createGame("ABCD");
+  addPlayer(g, { id: "p1", name: "Ann" });
+  setBoard(g, {
+    rounds: [testBoard(), testBoard()],
+    final: { category: "F", clue: "c", answer: "a" },
+    options: { doubleRound: true, finalRound: true },
+  });
+  startGame(g, { random: LAST_CLUE });
+  playWholeBoard(g); // end of round 1, with round 2 still to come
+
+  const res = startFinal(g);
+  assert.equal(res.ok, false, "round 2 must not be skippable");
+  assert.equal(res.reason, "board-unplayed");
+});
+
+test("the reveal order survives a player vanishing from the roster", () => {
+  const g = atFinal();
+  startFinal(g);
+  setFinalWager(g, "p1", 100);
+  setFinalWager(g, "p2", 100);
+  revealFinalClue(g, 1_000_000);
+  // Nothing deletes players today; this pins the comparator if anything ever does.
+  g.players = g.players.filter((p) => p.id !== "p2");
+  closeFinalAnswers(g);
+
+  assert.equal(g.finalRound.order.length, 2);
+  assert.ok(
+    g.finalRound.order.every((id) => typeof id === "string"),
+    "a NaN comparator leaves the order implementation-defined",
+  );
+});
+
 // ------------------------------------------------- answers always get shown
 
 test("opening a clue opens the buzzers straight away", () => {
