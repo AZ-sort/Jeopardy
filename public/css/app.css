@@ -342,8 +342,17 @@ textarea {
   font-size: clamp(1.4rem, 3.4vw, 3.4rem);
 }
 
+/*
+ * A played square keeps its number, dimmed, rather than going blank.
+ *
+ * A blank tile reads as a gap in the board; a ghosted one still reads as "the
+ * $400, already gone", which is what the room is actually tracking. Dim
+ * enough to be plainly out of play at a glance from the sofa, legible enough
+ * to be worth keeping.
+ */
 .board__cell--spent .value {
-  display: none;
+  color: var(--brass-dim);
+  opacity: 0.6;
 }
 
 /* The clue takeover: the one orchestrated moment in the whole design. */
