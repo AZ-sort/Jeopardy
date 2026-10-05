@@ -286,6 +286,10 @@ OpenRouter, covering the request shape and every failure branch without a key.
   in progress. Saved boards live in Postgres and are unaffected.
 - **Sign-in needs both halves.** Without a database *and* Google credentials,
   saving is switched off and the page says so; everything else still works.
+- **A phone that loses its browser data loses its player.** Each phone is
+  issued a secret when it first joins, so nobody else can take over your score
+  by claiming your name — but there is no way to hand that identity back if
+  you clear it. You rejoin as somebody new, starting at $0.
 - **Buzz fairness is arrival order.** Someone on worse wifi is at a real
   disadvantage of a few tens of milliseconds. Fine among friends in one room;
   worth knowing if people are remote.

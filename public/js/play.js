@@ -16,6 +16,22 @@ function playerId() {
   return id;
 }
 
+/**
+ * The secret that proves this phone owns its player id.
+ *
+ * Per room, like the host's token, because every player's id is broadcast to
+ * the whole room — the id says who you claim to be, the token is why the
+ * server believes you. Issued on first join; lose it and you simply join as
+ * somebody new, which is what clearing browser data has always done.
+ */
+function playerToken(code) {
+  return localStorage.getItem("playerToken:" + code) ?? "";
+}
+
+function rememberPlayerToken(code, token) {
+  if (token) localStorage.setItem("playerToken:" + code, token);
+}
+
 let socket = null;
 let myId = null;
 let state = null;
@@ -64,10 +80,20 @@ function join(code, name) {
   el("p-name").textContent = name;
 
   socket = connect({
-    hello: () => ({ role: "player", code, playerId: playerId(), name }),
+    hello: () => ({
+      role: "player",
+      code,
+      playerId: playerId(),
+      playerToken: playerToken(code),
+      name,
+    }),
     onMessage(msg) {
       if (msg.type === "hello-ok") {
+        // The server may have handed us a different id than we asked for —
+        // if our token did not match, we are somebody new now.
         myId = msg.playerId;
+        localStorage.setItem("playerId", msg.playerId);
+        rememberPlayerToken(code, msg.playerToken);
         return;
       }
       if (msg.type === "state") {
