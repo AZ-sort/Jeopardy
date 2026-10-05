@@ -540,7 +540,7 @@ function handleHello(ws, msg) {
   // Players bring their own id from localStorage so a refresh keeps their
   // score — but an id alone proves nothing, since every id is broadcast to
   // the whole room. Claiming one that is already taken needs its token.
-  const playerId = claimPlayerId(room, msg);
+  const { playerId, mint } = claimPlayerId(room, msg);
 
   const result = G.addPlayer(room.game, { id: playerId, name: msg.name });
   if (!result.ok) {
@@ -550,6 +550,12 @@ function handleHello(ws, msg) {
     };
     return send(ws, { type: "fatal", message: reasons[result.reason] ?? "Could not join." });
   }
+
+  // Minted only now that the player is really in the game. Doing it earlier
+  // meant every refused join — a blank name, a full room — left an entry
+  // behind in a map nothing ever cleans, which anyone with the room code
+  // could grow without limit. Tokens are now capped by MAX_PLAYERS.
+  if (mint) room.playerTokens.set(playerId, randomBytes(16).toString("hex"));
 
   // Replace any previous socket for this player.
   const previous = room.players.get(playerId);
@@ -590,16 +596,12 @@ function claimPlayerId(room, msg) {
       ? msg.playerId
       : null;
 
-  if (!asked) return mintPlayer(room, randomUUID());
-  const held = room.playerTokens.get(asked);
-  if (!held) return mintPlayer(room, asked);
-  if (secretsMatch(msg.playerToken, held)) return asked;
-  return mintPlayer(room, randomUUID());
-}
+  if (!asked) return { playerId: randomUUID(), mint: true };
 
-function mintPlayer(room, playerId) {
-  room.playerTokens.set(playerId, randomBytes(16).toString("hex"));
-  return playerId;
+  const held = room.playerTokens.get(asked);
+  if (!held) return { playerId: asked, mint: true };
+  if (secretsMatch(msg.playerToken, held)) return { playerId: asked, mint: false };
+  return { playerId: randomUUID(), mint: true };
 }
 
 function handlePlayerMessage(ws, room, msg) {
