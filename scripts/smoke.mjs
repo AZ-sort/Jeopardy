@@ -460,12 +460,42 @@ const p2again = await client(() => ({
   role: "player",
   code: room2.code,
   playerId: "s-2",
+  // The token the server issued on the first join. Without it this would be
+  // treated as somebody new, which is the whole point of the next check.
+  playerToken: p2.hello.playerToken,
   name: "Dee",
 }));
 await wait(200);
 check("rejoining does not duplicate the player", h2.state.players.length === 2);
 check("the score survived the reconnect", dee().score === 300, String(dee().score));
 check("they are back online", dee().connected === true);
+check("a token came back with the identity", typeof p2again.hello.playerToken === "string");
+
+console.log("\nAnother player's id is no use without their token");
+const beforeImpostor = h2.state.players.length;
+const impostor = await client(() => ({
+  type: "hello",
+  role: "player",
+  code: room2.code,
+  // Every id is broadcast to every player, so this is public knowledge.
+  playerId: "s-2",
+  playerToken: "not-the-right-token",
+  name: "Imposter",
+}));
+await wait(250);
+check(
+  "they are given a new identity, not Dee's",
+  impostor.hello.playerId !== "s-2",
+  impostor.hello.playerId,
+);
+check("Dee's score is untouched", dee().score === 300, String(dee().score));
+check("Dee was not kicked off", dee().connected === true);
+check("the room gained a player rather than losing one", h2.state.players.length === beforeImpostor + 1);
+
+const stillDee = h2.state.players.find((p) => p.id === "s-2");
+check("Dee is still Dee", stillDee?.name === "Dee", stillDee?.name);
+impostor.ws.close();
+await wait(150);
 
 console.log("");
 console.log("Saved boards require an account");

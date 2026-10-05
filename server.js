@@ -163,6 +163,14 @@ function createRoom() {
     hosts: new Set(),
     /** playerId -> ws */
     players: new Map(),
+    /**
+     * playerId -> secret, minted the first time an id joins this room.
+     *
+     * Player ids are broadcast to everyone, so without this anyone in the room
+     * could reconnect as a rival and inherit their score, their secret Final
+     * Jeopardy bet, and the ability to stake it.
+     */
+    playerTokens: new Map(),
     lastSeen: Date.now(),
     generating: new Set(),
   };
@@ -529,11 +537,10 @@ function handleHello(ws, msg) {
     return;
   }
 
-  // Players bring their own id from localStorage so a refresh keeps their score.
-  const playerId =
-    typeof msg.playerId === "string" && msg.playerId.length > 0 && msg.playerId.length <= 64
-      ? msg.playerId
-      : randomUUID();
+  // Players bring their own id from localStorage so a refresh keeps their
+  // score — but an id alone proves nothing, since every id is broadcast to
+  // the whole room. Claiming one that is already taken needs its token.
+  const playerId = claimPlayerId(room, msg);
 
   const result = G.addPlayer(room.game, { id: playerId, name: msg.name });
   if (!result.ok) {
@@ -554,8 +561,45 @@ function handleHello(ws, msg) {
 
   ws.meta = { role: "player", code, playerId };
   room.players.set(playerId, ws);
-  send(ws, { type: "hello-ok", role: "player", code, playerId });
+  send(ws, {
+    type: "hello-ok",
+    role: "player",
+    code,
+    playerId,
+    playerToken: room.playerTokens.get(playerId),
+  });
   broadcast(room);
+}
+
+/**
+ * Works out which player this socket is allowed to be.
+ *
+ * An id nobody has claimed in this room is granted and given a fresh token.
+ * An id that is already taken needs that token; without it the socket becomes
+ * a brand-new player instead.
+ *
+ * Handing out a new identity rather than refusing is deliberate. An impostor
+ * gets a blank player instead of their rival's score, with no error to probe,
+ * and someone whose phone storage genuinely got mangled quietly starts again
+ * rather than being locked out of the game — which is already what happens
+ * today if you clear your browser data.
+ */
+function claimPlayerId(room, msg) {
+  const asked =
+    typeof msg.playerId === "string" && msg.playerId.length > 0 && msg.playerId.length <= 64
+      ? msg.playerId
+      : null;
+
+  if (!asked) return mintPlayer(room, randomUUID());
+  const held = room.playerTokens.get(asked);
+  if (!held) return mintPlayer(room, asked);
+  if (secretsMatch(msg.playerToken, held)) return asked;
+  return mintPlayer(room, randomUUID());
+}
+
+function mintPlayer(room, playerId) {
+  room.playerTokens.set(playerId, randomBytes(16).toString("hex"));
+  return playerId;
 }
 
 function handlePlayerMessage(ws, room, msg) {

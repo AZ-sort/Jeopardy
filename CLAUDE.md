@@ -179,27 +179,26 @@ Three things here are load-bearing:
   client, so one can be `"toString"`; on a plain object that key reads as
   already present and the round would advance without that player's bet.
 
-## Known weakness: a player's identity is not authenticated
+## Players are authenticated by a token, not by their id
 
-A player is whatever `playerId` string their socket sends (`server.js`), and
-every player's id is broadcast to every other player. That is the reconnect
-mechanism — it is how a backgrounded phone rejoins with its score — but it
-means a player in the room can rejoin as someone else.
+A player id is public: every id is broadcast to every player, because the UI
+needs them to map a buzz or a reveal to a name. So an id says who a socket
+*claims* to be and proves nothing on its own.
 
-Before Final Jeopardy that bought a wrongful buzz, which the host sees and can
-undo with ±100. It now also buys **writes**: having claimed someone's id, you
-can stake their whole score and submit a garbage answer as them, in one
-message, at the climax of the game, with the score controls behind the `.final`
-takeover. The read side matters too — you can see their bet and answer, and
-bets stay overwritable for the whole betting phase, so you can look and then
-revise your own.
+The first time an id joins a room the server mints a secret and returns it in
+`hello-ok`; the phone keeps it as `playerToken:<CODE>` in localStorage, the
+same shape as `hostToken:<CODE>`. Reclaiming an id that is already taken
+requires that token, compared with the timing-safe `secretsMatch`.
 
-One thing limits it: hijacking an id force-closes the victim's socket with a
-fatal "You joined from another device", and the client does not auto-reconnect
-after a fatal. The attack is loud, not silent.
+**A bad or missing token yields a brand-new identity rather than a refusal**
+(`claimPlayerId` in `server.js`). An impostor gets a blank player instead of
+their rival's score, with no error message to probe, and a phone whose storage
+got mangled quietly starts again rather than being locked out — which is
+already what clearing browser data has always done.
 
-Closing it means issuing a per-player token at join, like `hostToken`, and
-requiring it to reclaim an id.
+Tokens live in `room.playerTokens` and die with the room, like `hostToken`.
+There is no recovery path: a player who loses their storage loses that
+identity, which was true before this existed too.
 
 ## Not built yet
 
