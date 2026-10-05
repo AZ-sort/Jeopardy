@@ -106,8 +106,8 @@ Three things to know:
 
 `public/js/host.js` keeps its own copies of `ROUND_VALUES` and
 `MAX_CATEGORIES`, because the browser cannot import `lib/board.js` — it pulls
-in zod and there is no build step. Change one, change both; the smoke test
-asserts round 2's values over the wire.
+in zod and there is no build step. Change one, change both:
+`test/constants.test.js` reads the host page as text and fails if they drift.
 
 ## The Daily Double
 
@@ -151,6 +151,12 @@ your way back from the last bet of the night. That yields an invariant worth
 keeping: **Final Jeopardy can never take a player below $0.** Anyone at or
 below zero is entered at a forced $0 so the room is not waiting on a bet they
 cannot place.
+
+**A Final Jeopardy bet stays changeable for the whole betting phase, on
+purpose.** It looks like a missing guard and it is not: a player who was
+disconnected when the round opened is entered at $0, and overwriting is what
+lets them place a real bet if their phone comes back. Adding an "already bet"
+check would re-break that.
 
 Two names that are easy to confuse: **`game.final` is the authored clue**
 (`{category, clue, answer}`, set by `setBoard`), while **`game.finalRound` is

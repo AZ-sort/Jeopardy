@@ -259,7 +259,10 @@ app.post("/api/rooms/:code/generate", async (req, res) => {
     return res.status(403).json({ error: "Not the host of this game." });
   }
 
-  const round = Number(req.body?.roundIndex ?? 0);
+  // Defaults to round 1 for a client that does not send one, but only a real
+  // number counts: `Number(true)` is 1, which would write into round 2.
+  const sent = req.body?.roundIndex;
+  const round = sent === undefined || sent === null ? 0 : typeof sent === "number" ? sent : NaN;
   const index = Number(req.body?.categoryIndex);
   if (!Number.isInteger(round) || round < 0 || round >= NUM_ROUNDS) {
     return res.status(400).json({ error: "Bad round." });
@@ -771,6 +774,7 @@ function handleHostMessage(ws, room, msg) {
       "no-wager-player": "Pick who found the Daily Double first.",
       "no-more-rounds": "That was the last round.",
       "no-final": "This board has no Final Jeopardy.",
+      "board-unplayed": "There is still a round to play first.",
       "bets-outstanding": "Someone has not bet yet.",
       "nobody-left": "Everyone has been ruled on.",
       "bad-increment": "Bets go in steps of $100.",
