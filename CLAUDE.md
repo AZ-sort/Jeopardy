@@ -204,3 +204,36 @@ identity, which was true before this existed too.
 
 Sound, and any timer outside Final Jeopardy's answer window. The design for
 what shipped is in `docs/specs/2026-10-03-rounds-and-final-jeopardy-design.md`.
+
+### How the host reads the answer — unresolved
+
+**Peek at answer** puts the answer in small type in the control bar, which
+only works when the room cannot see the host's screen. Cast the host page to
+a TV and peeking shows it to everyone, just smaller. The README's own
+"casting to a TV" section describes peek as the answer to this, and for a
+cast setup it is not.
+
+The workaround, which needs no code: open the host page in a second window,
+cast only the first, and peek in the second. Peek state is per-page — the
+`peeking` flag in `public/js/host.js` is local and never sent to the server —
+so one host window peeking does not affect the other. It fails if the host
+mirrors their whole desktop rather than casting a single window.
+
+Two real fixes, in order of size:
+
+- **A display-only route** (say `/board?code=XXXX`) to cast, while the host
+  keeps the normal page. The important part is not tidiness: a display screen
+  should take the *player* payload, where unrevealed answers are already
+  stripped server-side, so the TV cannot leak the answer because it never
+  receives it. The host page holds the answer and merely declines to show it
+  big — one render bug from putting it on the TV, which has happened once
+  already (the Final Jeopardy clue appearing during betting). Most of the work
+  is extracting board/scores/clue rendering out of `host.js` so it is shared
+  rather than copied.
+- **A phone control screen.** `room.hosts` is already a Set and `broadcast`
+  already loops it, so two host sockets work today with no server change. What
+  is missing is getting `hostToken` onto the phone — a QR of
+  `/host?code=XXXX&t=<token>` — and splitting the roles so the TV is display
+  only and the phone carries the answer and the verdict buttons. Note the QR
+  is host control in a photograph: it must be shown on demand and dismissed,
+  never left on the TV.

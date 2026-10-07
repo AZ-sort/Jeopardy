@@ -152,11 +152,21 @@ so nobody is betting with the question in front of them. Then you read it, and
 Correct or Wrong moves their score by the bet rather than the square's value. A
 miss ends the clue — it was never open to the room.
 
-### If you are casting to a TV
+### Seeing the answer without showing it
 
-The clue screen deliberately never shows the answer — the **Peek at answer**
-button puts it in small type down in the control bar instead, and **Show answer
-to all** is what puts it on the big screen for everyone.
+The clue screen never shows the answer on its own. **Peek at answer** puts it
+in small type down in the control bar, and **Show answer to all** is what puts
+it up large for the room.
+
+Peek assumes nobody else can see your screen. **If you are casting to a TV it
+shows the answer to everyone, just in a smaller font.**
+
+The way round it today is two windows: open this page a second time, cast only
+the first, and peek in the second. Peeking is per-window, so the TV copy stays
+clean. It only works if you cast a *single window* — mirroring your whole
+desktop sends both.
+
+A proper fix, a display-only screen made for casting, is on the list.
 
 ## Hosting it so your computer can stay off
 
